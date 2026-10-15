@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Ultimate PDF</string>
+    <string name="nav_viewer">Viewer</string>
+    <string name="nav_editor">Editor</string>
+    <string name="nav_scanner">Scan &amp; OCR</string>
+    <string name="nav_annotate">Annotate</string>
+    <string name="nav_forms">Forms</string>
+    <string name="nav_sign">Sign</string>
+    <string name="nav_tools">Tools</string>
+    <string name="open_pdf">Open PDF Document</string>
+    <string name="no_document_loaded">No PDF document loaded</string>
+    <string name="select_pdf_instruction">Open a document from your storage or scan a new one with your camera</string>
+    <string name="camera_permission_required">Camera permission is required to scan documents</string>
+    <string name="grant_permission">Grant Permission</string>
+    <string name="searchable_pdf_created">Searchable PDF created successfully</string>
+    <string name="save">Save</string>
+    <string name="share">Share</string>
+    <string name="export">Export</string>
+    <string name="undo">Undo</string>
+    <string name="redo">Redo</string>
+    <string name="clear">Clear</string>
+    <string name="delete">Delete</string>
+    <string name="rotate_right">Rotate 90°</string>
+    <string name="invert_colors">Invert Colors (Dark Mode)</string>
+    <string name="password_protect">Password Protect</string>
+    <string name="enter_password">Enter Password</string>
+    <string name="watermark">Watermark</string>
+    <string name="add_signature">Add Signature</string>
+    <string name="fill_form">Fill Form</string>
+</resources>

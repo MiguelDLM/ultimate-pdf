@@ -1,0 +1,31 @@
+# Reference repositories downloaded for analysis
+references/
+
+# Gradle
+.gradle/
+build/
+*/build/
+
+# Android Studio / IntelliJ IDEA
+.idea/
+*.iml
+.navigation/
+captures/
+output.json
+
+# Local configuration
+local.properties
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Keystores & sensitive keys
+*.jks
+*.keystore
+*.p12
+*.pfx
+
+# Node / web leftovers if any
+node_modules/
+dist/
