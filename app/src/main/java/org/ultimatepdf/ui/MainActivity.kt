@@ -5,7 +5,13 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -43,7 +49,6 @@ class MainActivity : ComponentActivity() {
         securityManager = PdfSecurityManager(applicationContext)
         signatureService = DigitalSignatureService(applicationContext)
 
-        // Check if opened via PDF Intent
         val initialUri = extractPdfUri(intent)
 
         setContent {
@@ -51,6 +56,9 @@ class MainActivity : ComponentActivity() {
                 val coroutineScope = rememberCoroutineScope()
                 var currentDocument by remember { mutableStateOf<DocumentModel?>(null) }
                 var currentDestination by remember { mutableStateOf(AppDestination.VIEWER) }
+
+                // Always start in Simple Reader Mode (isEditMode = false)
+                var isEditMode by remember { mutableStateOf(false) }
 
                 val configuration = LocalConfiguration.current
                 val isTablet = configuration.screenWidthDp >= 600
@@ -61,6 +69,8 @@ class MainActivity : ComponentActivity() {
                         try {
                             val doc = pdfEngine.openDocument(uri)
                             currentDocument = doc
+                            isEditMode = false // Always open as simple reader
+                            currentDestination = AppDestination.VIEWER
                         } catch (e: Exception) {
                             e.printStackTrace()
                         }
@@ -72,20 +82,22 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     if (isTablet) {
-                        // Tablet UI: Left Navigation Rail + Content Area
+                        // Tablet UI: Left Navigation Rail (Visible only in Edit Mode) + Content Area
                         Row(modifier = Modifier.fillMaxSize()) {
-                            NavigationRail(
-                                modifier = Modifier.fillMaxHeight(),
-                                containerColor = MaterialTheme.colorScheme.surface
-                            ) {
-                                Spacer(Modifier.height(16.dp))
-                                AppDestination.values().forEach { dest ->
-                                    NavigationRailItem(
-                                        selected = currentDestination == dest,
-                                        onClick = { currentDestination = dest },
-                                        icon = { Icon(dest.icon, contentDescription = dest.title) },
-                                        label = { Text(dest.title, maxLines = 1) }
-                                    )
+                            if (isEditMode) {
+                                NavigationRail(
+                                    modifier = Modifier.fillMaxHeight(),
+                                    containerColor = MaterialTheme.colorScheme.surface
+                                ) {
+                                    Spacer(Modifier.height(16.dp))
+                                    AppDestination.values().forEach { dest ->
+                                        NavigationRailItem(
+                                            selected = currentDestination == dest,
+                                            onClick = { currentDestination = dest },
+                                            icon = { Icon(dest.icon, contentDescription = dest.title) },
+                                            label = { Text(dest.title, maxLines = 1) }
+                                        )
+                                    }
                                 }
                             }
 
@@ -98,24 +110,42 @@ class MainActivity : ComponentActivity() {
                                     securityManager = securityManager,
                                     signatureService = signatureService,
                                     onDocumentLoaded = { currentDocument = it },
+                                    isEditMode = isEditMode,
+                                    onToggleEditMode = {
+                                        isEditMode = !isEditMode
+                                        if (!isEditMode) {
+                                            currentDestination = AppDestination.VIEWER
+                                        }
+                                    },
+                                    onNavigateToTool = { toolRoute ->
+                                        AppDestination.values().find { it.route == toolRoute }?.let {
+                                            currentDestination = it
+                                        }
+                                    },
                                     isTablet = true
                                 )
                             }
                         }
                     } else {
-                        // Phone UI: Top Content Area + Bottom Navigation Bar
+                        // Phone UI: Simple Reader by default. Navigation Bar appears only in Edit Mode
                         Scaffold(
                             bottomBar = {
-                                NavigationBar(
-                                    containerColor = MaterialTheme.colorScheme.surface
+                                AnimatedVisibility(
+                                    visible = isEditMode,
+                                    enter = slideInVertically(initialOffsetY = { it }),
+                                    exit = slideOutVertically(targetOffsetY = { it })
                                 ) {
-                                    AppDestination.values().forEach { dest ->
-                                        NavigationBarItem(
-                                            selected = currentDestination == dest,
-                                            onClick = { currentDestination = dest },
-                                            icon = { Icon(dest.icon, contentDescription = dest.title) },
-                                            label = { Text(dest.title, maxLines = 1) }
-                                        )
+                                    NavigationBar(
+                                        containerColor = MaterialTheme.colorScheme.surface
+                                    ) {
+                                        AppDestination.values().forEach { dest ->
+                                            NavigationBarItem(
+                                                selected = currentDestination == dest,
+                                                onClick = { currentDestination = dest },
+                                                icon = { Icon(dest.icon, contentDescription = dest.title) },
+                                                label = { Text(dest.title, maxLines = 1) }
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -133,6 +163,18 @@ class MainActivity : ComponentActivity() {
                                     securityManager = securityManager,
                                     signatureService = signatureService,
                                     onDocumentLoaded = { currentDocument = it },
+                                    isEditMode = isEditMode,
+                                    onToggleEditMode = {
+                                        isEditMode = !isEditMode
+                                        if (!isEditMode) {
+                                            currentDestination = AppDestination.VIEWER
+                                        }
+                                    },
+                                    onNavigateToTool = { toolRoute ->
+                                        AppDestination.values().find { it.route == toolRoute }?.let {
+                                            currentDestination = it
+                                        }
+                                    },
                                     isTablet = false
                                 )
                             }
@@ -152,6 +194,9 @@ class MainActivity : ComponentActivity() {
         securityManager: PdfSecurityManager,
         signatureService: DigitalSignatureService,
         onDocumentLoaded: (DocumentModel) -> Unit,
+        isEditMode: Boolean,
+        onToggleEditMode: () -> Unit,
+        onNavigateToTool: (String) -> Unit,
         isTablet: Boolean
     ) {
         val coroutineScope = rememberCoroutineScope()
@@ -162,6 +207,9 @@ class MainActivity : ComponentActivity() {
                     currentDocument = currentDocument,
                     pdfEngine = pdfEngine,
                     onDocumentLoaded = onDocumentLoaded,
+                    isEditMode = isEditMode,
+                    onToggleEditMode = onToggleEditMode,
+                    onNavigateToTool = onNavigateToTool,
                     isTablet = isTablet
                 )
             }

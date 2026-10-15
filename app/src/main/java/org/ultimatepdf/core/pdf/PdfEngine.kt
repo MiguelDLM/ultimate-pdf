@@ -12,12 +12,13 @@ import android.os.ParcelFileDescriptor
 import android.util.Log
 import android.util.LruCache
 import com.tom_roush.pdfbox.pdmodel.PDDocument
-import com.tom_roush.pdfbox.pdmodel.interactive.form.PDAcroForm
 import com.tom_roush.pdfbox.pdmodel.interactive.form.PDCheckBox
 import com.tom_roush.pdfbox.pdmodel.interactive.form.PDChoice
 import com.tom_roush.pdfbox.pdmodel.interactive.form.PDRadioButton
 import com.tom_roush.pdfbox.pdmodel.interactive.form.PDTextField
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.ultimatepdf.core.model.AcroFieldType
 import org.ultimatepdf.core.model.AcroFormField
@@ -30,12 +31,16 @@ import java.io.FileOutputStream
  * High-performance PDF Engine combining Android's native hardware-accelerated [PdfRenderer]
  * for sub-second rendering, alongside [PDDocument] (PDFBox-Android) for structural AcroForms,
  * security, and low-level object manipulation.
+ *
+ * Synchronized with [Mutex] to guarantee thread safety since native [PdfRenderer] only
+ * permits a single open page at any point in time.
  */
 class PdfEngine(private val context: Context) {
 
     private var currentPfd: ParcelFileDescriptor? = null
     private var pdfRenderer: PdfRenderer? = null
-    private val bitmapCache: LruCache<String, Bitmap> = LruCache(32)
+    private val bitmapCache: LruCache<String, Bitmap> = LruCache(48)
+    private val renderMutex = Mutex()
 
     companion object {
         private const val TAG = "PdfEngine"
@@ -66,8 +71,27 @@ class PdfEngine(private val context: Context) {
     }
 
     /**
+     * Retrieves dimensions (width to height) of a given page to allow smooth layout placeholders.
+     */
+    suspend fun getPageDimensions(pageIndex: Int): Pair<Int, Int> = withContext(Dispatchers.Default) {
+        renderMutex.withLock {
+            val renderer = pdfRenderer ?: return@withContext Pair(595, 842)
+            if (pageIndex !in 0 until renderer.pageCount) return@withContext Pair(595, 842)
+            try {
+                val page = renderer.openPage(pageIndex)
+                val w = page.width
+                val h = page.height
+                page.close()
+                Pair(w, h)
+            } catch (e: Exception) {
+                Pair(595, 842)
+            }
+        }
+    }
+
+    /**
      * Renders a specific page to a Bitmap at the requested target dimensions.
-     * Supports color inversion for dark mode accessibility.
+     * Thread-safe with Mutex and backed by an LruCache for instant smooth scrolling.
      */
     suspend fun renderPage(
         pageIndex: Int,
@@ -76,32 +100,48 @@ class PdfEngine(private val context: Context) {
         invertColors: Boolean = false
     ): Bitmap = withContext(Dispatchers.Default) {
         val cacheKey = "$pageIndex-${targetWidth}x$targetHeight-inv=$invertColors"
-        bitmapCache.get(cacheKey)?.let { return@withContext it }
-
-        val renderer = pdfRenderer ?: throw IllegalStateException("PdfRenderer not initialized")
-        val page = renderer.openPage(pageIndex)
-
-        // Calculate aspect-ratio preserving dimensions
-        val pageWidth = page.width
-        val pageHeight = page.height
-        val scale = minOf(targetWidth.toFloat() / pageWidth, targetHeight.toFloat() / pageHeight)
-            .coerceAtLeast(0.1f)
-        val outW = (pageWidth * scale).toInt().coerceAtLeast(1)
-        val outH = (pageHeight * scale).toInt().coerceAtLeast(1)
-
-        val bitmap = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
-        bitmap.eraseColor(Color.WHITE)
-
-        page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-        page.close()
-
-        val finalBitmap = if (invertColors) {
-            invertBitmapColors(bitmap)
-        } else {
-            bitmap
+        synchronized(bitmapCache) {
+            bitmapCache.get(cacheKey)?.let { return@withContext it }
         }
 
-        bitmapCache.put(cacheKey, finalBitmap)
+        val finalBitmap = renderMutex.withLock {
+            // Double check cache under lock
+            synchronized(bitmapCache) {
+                bitmapCache.get(cacheKey)?.let { return@withLock it }
+            }
+
+            val renderer = pdfRenderer ?: throw IllegalStateException("PdfRenderer not initialized")
+            if (pageIndex !in 0 until renderer.pageCount) {
+                throw IndexOutOfBoundsException("Page index $pageIndex out of bounds")
+            }
+
+            val page = renderer.openPage(pageIndex)
+            try {
+                val pageWidth = page.width
+                val pageHeight = page.height
+                val scale = minOf(targetWidth.toFloat() / pageWidth, targetHeight.toFloat() / pageHeight)
+                    .coerceAtLeast(0.1f)
+                val outW = (pageWidth * scale).toInt().coerceAtLeast(1)
+                val outH = (pageHeight * scale).toInt().coerceAtLeast(1)
+
+                val bitmap = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
+                bitmap.eraseColor(Color.WHITE)
+
+                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+
+                if (invertColors) {
+                    invertBitmapColors(bitmap)
+                } else {
+                    bitmap
+                }
+            } finally {
+                page.close()
+            }
+        }
+
+        synchronized(bitmapCache) {
+            bitmapCache.put(cacheKey, finalBitmap)
+        }
         finalBitmap
     }
 
@@ -224,6 +264,8 @@ class PdfEngine(private val context: Context) {
             Log.w(TAG, "Error closing ParcelFileDescriptor", e)
         }
         currentPfd = null
-        bitmapCache.evictAll()
+        synchronized(bitmapCache) {
+            bitmapCache.evictAll()
+        }
     }
 }
