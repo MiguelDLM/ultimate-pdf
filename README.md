@@ -187,5 +187,5 @@ The compiled, runnable APK will be output to:
 ---
 
 ## 📄 License & Attribution
-Ultimate PDF is released under the **Apache License 2.0**.  
+Ultimate PDF is released under the **Apache License 2.0** (see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE)).  
 Special thanks to the authors and maintainers of **MakeACopy**, **FairScan**, **AnonPDF**, **Images-to-PDF**, **Open PDF Studio**, **PdfBox-Android**, **MuPDF**, **PdfiumAndroid**, and **Open-PDF-Sign**.
