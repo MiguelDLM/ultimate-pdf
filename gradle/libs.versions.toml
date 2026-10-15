@@ -16,6 +16,8 @@ pdfbox = "2.0.27.0"
 bouncycastle = "1.78.1"
 navigationCompose = "2.9.8"
 windowSizeClass = "1.4.0-alpha10"
+mlkitTextRecognition = "16.0.1"
+opencv = "4.10.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -49,6 +51,10 @@ pdfbox-android = { group = "com.tom-roush", name = "pdfbox-android", version.ref
 # Cryptography & Digital Signature (PAdES / PKCS#7 / X.509 / TSA)
 bouncycastle-prov = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "bouncycastle" }
 bouncycastle-pkix = { group = "org.bouncycastle", name = "bcpkix-jdk18on", version.ref = "bouncycastle" }
+
+# Scanner: on-device OCR (bundled Latin model, works offline) and computer vision
+mlkit-text-recognition = { group = "com.google.mlkit", name = "text-recognition", version.ref = "mlkitTextRecognition" }
+opencv = { group = "org.opencv", name = "opencv", version.ref = "opencv" }
 
 # Testing
 junit = { group = "junit", name = "junit", version.ref = "junit" }

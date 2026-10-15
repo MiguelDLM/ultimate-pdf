@@ -1,384 +1,342 @@
 package org.ultimatepdf.ui.editor
 
-import android.net.Uri
 import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.RotateLeft
+import androidx.compose.material.icons.automirrored.filled.RotateRight
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import org.ultimatepdf.R
 import org.ultimatepdf.core.model.*
 import org.ultimatepdf.core.pdf.EditPlanProcessor
+import org.ultimatepdf.core.pdf.PageRef
+import org.ultimatepdf.core.pdf.PdfThumbnails
+import org.ultimatepdf.ui.components.ScreenTopBar
+import org.ultimatepdf.ui.components.draggableItem
+import org.ultimatepdf.ui.components.rememberGridReorderState
+import org.ultimatepdf.ui.components.rememberPdfPicker
+import org.ultimatepdf.ui.components.reorderable
+import org.ultimatepdf.ui.components.displayName
 import java.io.File
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Page organizer: tap pages to select them, long-press and drag to reorder. Every change is
+ * an [EditOp] in a non-destructive plan with undo / redo; saving rewrites the document.
+ */
 @Composable
 fun PdfEditorScreen(
     currentDocument: DocumentModel?,
     editPlanProcessor: EditPlanProcessor,
+    thumbnails: PdfThumbnails,
+    onSave: suspend (File) -> Boolean,
+    onBack: () -> Unit,
     isTablet: Boolean = false
 ) {
-    val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
-
     if (currentDocument == null) {
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center
-        ) {
-            Text("Open a PDF document in the Viewer tab first to edit pages.")
-        }
+        LaunchedEffect(Unit) { onBack() }
         return
     }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
-    // Edit operations history for Undo/Redo
-    val opHistory = remember { mutableStateListOf<EditOp>() }
-    val redoStack = remember { mutableStateListOf<EditOp>() }
+    val ops = remember { mutableStateListOf<EditOp>() }
+    val redo = remember { mutableStateListOf<EditOp>() }
+    // Selection holds plan indices (positions in plan.pages, deleted pages included).
+    val selected = remember { mutableStateSetOf<Int>() }
+    var showWatermark by remember { mutableStateOf(false) }
+    var isSaving by remember { mutableStateOf(false) }
 
-    // Selected pages for batch actions
-    val selectedIndices = remember { mutableStateSetOf<Int>() }
-
-    var showWatermarkDialog by remember { mutableStateOf(false) }
-    var watermarkText by remember { mutableStateOf("CONFIDENTIAL") }
-
-    var isExporting by remember { mutableStateOf(false) }
-
-    // Splicing/Inserting PDF
-    val insertPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
-        uri?.let {
-            val op = InsertPages(
-                sourceUri = it,
-                targetPosition = if (selectedIndices.isNotEmpty()) selectedIndices.first() else 0,
-                pageCount = 1,
-                label = it.lastPathSegment ?: "Inserted Document"
-            )
-            opHistory.add(op)
-            redoStack.clear()
+    val plan = remember(currentDocument, ops.size) { EditPlanBuilder.build(currentDocument.pageCount, ops) }
+    val visible = remember(plan) { plan.pages.indices.filterNot { plan.pages[it].deleted } }
+    // Keys that follow a page through moves, so the grid doesn't re-create every item on drop.
+    val keys = remember(plan) {
+        val seen = mutableMapOf<String, Int>()
+        plan.pages.map { page ->
+            val base = "${page.sourceDocumentUri ?: "main"}#${page.sourceIndex}"
+            val occurrence = seen.merge(base, 1, Int::plus)!!
+            "$base#$occurrence"
         }
     }
+    // While dragging, the grid shows this provisional order; the move is committed on release.
+    var dragOrder by remember { mutableStateOf<List<Int>?>(null) }
+    var draggedPlanIndex by remember { mutableStateOf<Int?>(null) }
+    val shown = dragOrder ?: visible
 
-    // Recompute plan dynamically by folding ops
-    val editPlan = remember(currentDocument, opHistory.size) {
-        EditPlanBuilder.build(currentDocument.pageCount, opHistory)
+    fun record(op: EditOp) {
+        ops += op
+        redo.clear()
+    }
+
+    val gridState = rememberLazyGridState()
+    val reorder = rememberGridReorderState(
+        grid = gridState,
+        contentPadding = GridPadding,
+        onDragEnd = {
+            val order = dragOrder
+            val dragged = draggedPlanIndex
+            if (order != null && dragged != null) {
+                val target = visible[order.indexOf(dragged)]
+                if (target != dragged) {
+                    record(MovePage(dragged, target))
+                    selected.clear()
+                }
+            }
+            dragOrder = null
+            draggedPlanIndex = null
+        }
+    ) { from, to ->
+        val order = (dragOrder ?: visible).toMutableList()
+        if (draggedPlanIndex == null) draggedPlanIndex = order[from]
+        order.add(to, order.removeAt(from))
+        dragOrder = order
+    }
+
+    val insertPicker = rememberPdfPicker { uri ->
+        scope.launch {
+            val count = thumbnails.pageCount(uri)
+            if (count == 0) return@launch
+            // Insert after the last selected page, or at the end.
+            val at = (selected.maxOrNull()?.plus(1)) ?: plan.pages.size
+            record(InsertPages(uri, at, count, displayName(context, uri)))
+        }
     }
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text("Page Organizer & Plan", fontWeight = FontWeight.Bold)
-                        Text(
-                            text = "${editPlan.activePages.size} active pages · ${opHistory.size} pending edit(s)",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                },
-                actions = {
-                    // Undo button
-                    IconButton(
-                        onClick = {
-                            if (opHistory.isNotEmpty()) {
-                                val last = opHistory.removeAt(opHistory.lastIndex)
-                                redoStack.add(last)
-                            }
-                        },
-                        enabled = opHistory.isNotEmpty()
-                    ) {
-                        Icon(Icons.Default.Undo, contentDescription = "Undo")
-                    }
-
-                    // Redo button
-                    IconButton(
-                        onClick = {
-                            if (redoStack.isNotEmpty()) {
-                                val next = redoStack.removeAt(redoStack.lastIndex)
-                                opHistory.add(next)
-                            }
-                        },
-                        enabled = redoStack.isNotEmpty()
-                    ) {
-                        Icon(Icons.Default.Redo, contentDescription = "Redo")
-                    }
-
-                    // Export / Save button
-                    Button(
-                        onClick = {
-                            coroutineScope.launch {
-                                isExporting = true
-                                val outFile = File(context.cacheDir, "edited_${System.currentTimeMillis()}.pdf")
-                                val success = editPlanProcessor.applyAndExport(
-                                    primarySourceUri = currentDocument.uri,
-                                    plan = editPlan,
-                                    outputFile = outFile
-                                )
-                                isExporting = false
-                                if (success) {
-                                    Toast.makeText(context, "Saved to ${outFile.name} (${outFile.length() / 1024} KB)", Toast.LENGTH_LONG).show()
-                                } else {
-                                    Toast.makeText(context, "Export failed", Toast.LENGTH_SHORT).show()
-                                }
-                            }
-                        },
-                        enabled = !isExporting && editPlan.hasChanges,
-                        modifier = Modifier.padding(end = 8.dp)
-                    ) {
-                        if (isExporting) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary)
-                        } else {
-                            Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Export")
-                        }
-                    }
+            ScreenTopBar(stringResource(R.string.tool_organize_short), onBack) {
+                IconButton(onClick = { ops.removeLastOrNull()?.let { redo += it } }, enabled = ops.isNotEmpty()) {
+                    Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = stringResource(R.string.undo))
                 }
-            )
+                IconButton(onClick = { redo.removeLastOrNull()?.let { ops += it } }, enabled = redo.isNotEmpty()) {
+                    Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = stringResource(R.string.redo))
+                }
+                Button(
+                    onClick = {
+                        scope.launch {
+                            isSaving = true
+                            val out = File(context.cacheDir, "organized_${System.currentTimeMillis()}.pdf")
+                            val ok = editPlanProcessor.applyAndExport(currentDocument.uri, plan, out) && onSave(out)
+                            isSaving = false
+                            if (!ok) Toast.makeText(context, R.string.save_failed, Toast.LENGTH_LONG).show()
+                        }
+                    },
+                    enabled = plan.hasChanges && !isSaving,
+                    modifier = Modifier.padding(end = 8.dp)
+                ) { Text(stringResource(R.string.save)) }
+            }
         },
         bottomBar = {
-            // Action toolbar for selected pages
-            Surface(
-                tonalElevation = 4.dp,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.SpaceAround,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    IconButton(
-                        onClick = {
-                            if (selectedIndices.isNotEmpty()) {
-                                opHistory.add(RotatePages(90, selectedIndices.toSet()))
-                                redoStack.clear()
-                            }
-                        },
-                        enabled = selectedIndices.isNotEmpty()
-                    ) {
-                        Icon(Icons.Default.RotateRight, contentDescription = "Rotate 90°")
+            OrganizeActions(
+                selectedCount = selected.size,
+                onRotate = { degrees -> record(RotatePages(degrees, selected.toSet())) },
+                onDuplicate = {
+                    record(DuplicatePages(selected.toSet()))
+                    selected.clear()
+                },
+                onDelete = {
+                    if (selected.size >= visible.size) {
+                        Toast.makeText(context, R.string.organize_keep_one, Toast.LENGTH_SHORT).show()
+                    } else {
+                        record(DeletePages(selected.toSet()))
+                        selected.clear()
                     }
-
-                    IconButton(
-                        onClick = {
-                            if (selectedIndices.isNotEmpty()) {
-                                opHistory.add(DeletePages(selectedIndices.toSet()))
-                                redoStack.clear()
-                                selectedIndices.clear()
-                            }
-                        },
-                        enabled = selectedIndices.isNotEmpty()
-                    ) {
-                        Icon(Icons.Default.Delete, contentDescription = "Delete Page(s)")
-                    }
-
-                    IconButton(
-                        onClick = {
-                            if (selectedIndices.size == 1) {
-                                val currentPos = selectedIndices.first()
-                                if (currentPos > 0) {
-                                    opHistory.add(MovePage(currentPos, currentPos - 1))
-                                    redoStack.clear()
-                                    selectedIndices.clear()
-                                    selectedIndices.add(currentPos - 1)
-                                }
-                            }
-                        },
-                        enabled = selectedIndices.size == 1 && selectedIndices.first() > 0
-                    ) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Move Left")
-                    }
-
-                    IconButton(
-                        onClick = {
-                            if (selectedIndices.size == 1) {
-                                val currentPos = selectedIndices.first()
-                                if (currentPos < editPlan.pages.lastIndex) {
-                                    opHistory.add(MovePage(currentPos, currentPos + 1))
-                                    redoStack.clear()
-                                    selectedIndices.clear()
-                                    selectedIndices.add(currentPos + 1)
-                                }
-                            }
-                        },
-                        enabled = selectedIndices.size == 1 && selectedIndices.first() < editPlan.pages.lastIndex
-                    ) {
-                        Icon(Icons.Default.ArrowForward, contentDescription = "Move Right")
-                    }
-
-                    IconButton(onClick = {
-                        opHistory.add(ReversePages)
-                        redoStack.clear()
-                    }) {
-                        Icon(Icons.Default.SwapHoriz, contentDescription = "Reverse Order")
-                    }
-
-                    IconButton(onClick = { insertPicker.launch(arrayOf("application/pdf")) }) {
-                        Icon(Icons.Default.PostAdd, contentDescription = "Insert PDF")
-                    }
-
-                    IconButton(onClick = { showWatermarkDialog = true }) {
-                        Icon(Icons.Default.BrandingWatermark, contentDescription = "Watermark")
-                    }
-                }
-            }
+                },
+                onClearSelection = { selected.clear() },
+                onSelectAll = { selected.addAll(visible) },
+                onInsert = insertPicker,
+                onReverse = { record(ReversePages); selected.clear() },
+                onWatermark = { showWatermark = true }
+            )
         }
     ) { padding ->
-        val columns = if (isTablet) 5 else 3
-
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(columns),
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
-            contentPadding = PaddingValues(12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            itemsIndexed(editPlan.pages) { index, pageState ->
-                PageGridItem(
-                    position = index,
-                    pageState = pageState,
-                    isSelected = selectedIndices.contains(index),
-                    onClick = {
-                        if (selectedIndices.contains(index)) {
-                            selectedIndices.remove(index)
-                        } else {
-                            selectedIndices.add(index)
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            Text(
+                text = pluralStringResource(R.plurals.page_count, visible.size, visible.size) + " · " +
+                    stringResource(R.string.organize_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            )
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(if (isTablet) 140.dp else 104.dp),
+                state = gridState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .reorderable(reorder),
+                contentPadding = GridPadding,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                itemsIndexed(shown, key = { _, planIndex -> keys[planIndex] }) { position, planIndex ->
+                    val state = plan.pages[planIndex]
+                    val isSelected = planIndex in selected
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .draggableItem(reorder, keys[planIndex])
+                            .then(if (reorder.isDragging(keys[planIndex])) Modifier else Modifier.animateItem())
+                    ) {
+                        org.ultimatepdf.ui.components.PageThumbnail(
+                            page = PageRef(state.sourceDocumentUri ?: currentDocument.uri, state.sourceIndex),
+                            thumbnails = thumbnails,
+                            rotation = state.rotationDelta,
+                            borderColor = if (isSelected) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.outlineVariant,
+                            borderWidth = if (isSelected) 2.5.dp else 1.dp,
+                            modifier = Modifier.clickable {
+                                if (isSelected) selected.remove(planIndex) else selected.add(planIndex)
+                            }
+                        ) {
+                            if (isSelected) SelectionBadge(Modifier.align(Alignment.TopEnd))
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "${position + 1}",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(start = 8.dp)
+                            )
+                            // One-tap rotation of this page, without selecting it first.
+                            IconButton(onClick = { record(RotatePages(90, setOf(planIndex))) }, modifier = Modifier.size(36.dp)) {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.RotateRight,
+                                    contentDescription = stringResource(R.string.organize_rotate_page, position + 1),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
                     }
-                )
+                }
             }
         }
     }
 
-    if (showWatermarkDialog) {
+    if (showWatermark) {
+        var text by remember { mutableStateOf("") }
         AlertDialog(
-            onDismissRequest = { showWatermarkDialog = false },
-            title = { Text("Add Watermark") },
+            onDismissRequest = { showWatermark = false },
+            title = { Text(stringResource(R.string.organize_watermark)) },
             text = {
                 OutlinedTextField(
-                    value = watermarkText,
-                    onValueChange = { watermarkText = it },
-                    label = { Text("Watermark Text") }
+                    value = text,
+                    onValueChange = { text = it },
+                    label = { Text(stringResource(R.string.organize_watermark_text)) },
+                    singleLine = true
                 )
             },
             confirmButton = {
-                TextButton(onClick = {
-                    opHistory.add(SetWatermark(WatermarkOptions(text = watermarkText)))
-                    redoStack.clear()
-                    showWatermarkDialog = false
-                }) {
-                    Text("Apply")
-                }
+                TextButton(
+                    onClick = {
+                        record(SetWatermark(WatermarkOptions(text = text.trim())))
+                        showWatermark = false
+                    },
+                    enabled = text.isNotBlank()
+                ) { Text(stringResource(R.string.apply)) }
             },
-            dismissButton = {
-                TextButton(onClick = { showWatermarkDialog = false }) {
-                    Text("Cancel")
-                }
-            }
+            dismissButton = { TextButton(onClick = { showWatermark = false }) { Text(stringResource(R.string.cancel)) } }
         )
+    }
+
+    if (isSaving) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun PageGridItem(
-    position: Int,
-    pageState: PageState,
-    isSelected: Boolean,
-    onClick: () -> Unit
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(150.dp)
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = onClick
-            )
-            .border(
-                width = if (isSelected) 2.5.dp else 0.5.dp,
-                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
-                shape = RoundedCornerShape(10.dp)
-            ),
-        shape = RoundedCornerShape(10.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (pageState.deleted) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
-            else if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
-            else MaterialTheme.colorScheme.surface
-        )
+fun SelectionBadge(modifier: Modifier = Modifier, label: String? = null) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = modifier
+            .padding(6.dp)
+            .size(22.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.tertiary)
     ) {
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-                modifier = Modifier.rotate(pageState.rotationDelta.toFloat())
-            ) {
-                Icon(
-                    imageVector = if (pageState.deleted) Icons.Default.DeleteOutline else Icons.Default.Description,
-                    contentDescription = null,
-                    tint = if (pageState.deleted) MaterialTheme.colorScheme.error
-                    else if (isSelected) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(44.dp)
-                )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text = if (pageState.deleted) "Deleted" else "Page ${position + 1}",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                if (pageState.rotationDelta != 0) {
-                    Text(
-                        text = "${pageState.rotationDelta}°",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.secondary
-                    )
-                }
-            }
+        if (label != null) {
+            Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onTertiary)
+        } else {
+            Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.onTertiary, modifier = Modifier.size(16.dp))
+        }
+    }
+}
 
-            // Top-end checkmark or status badge
-            if (isSelected) {
-                Surface(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(6.dp)
-                        .size(20.dp),
-                    shape = RoundedCornerShape(10.dp),
-                    color = MaterialTheme.colorScheme.primary
-                ) {
-                    Icon(
-                        Icons.Default.Check,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimary,
-                        modifier = Modifier.padding(2.dp)
-                    )
+/** Selection actions when pages are selected, document actions otherwise. */
+@Composable
+private fun OrganizeActions(
+    selectedCount: Int,
+    onRotate: (Int) -> Unit,
+    onDuplicate: () -> Unit,
+    onDelete: () -> Unit,
+    onClearSelection: () -> Unit,
+    onSelectAll: () -> Unit,
+    onInsert: () -> Unit,
+    onReverse: () -> Unit,
+    onWatermark: () -> Unit
+) {
+    Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
+        AnimatedContent(targetState = selectedCount > 0, label = "organize-actions") { hasSelection ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(horizontal = 4.dp, vertical = 6.dp)
+            ) {
+                if (hasSelection) {
+                    ActionItem(Icons.Default.Close, stringResource(R.string.organize_selected, selectedCount), onClearSelection)
+                    ActionItem(Icons.AutoMirrored.Filled.RotateLeft, stringResource(R.string.organize_rotate_left)) { onRotate(270) }
+                    ActionItem(Icons.AutoMirrored.Filled.RotateRight, stringResource(R.string.organize_rotate_right)) { onRotate(90) }
+                    ActionItem(Icons.Default.Sync, "180°") { onRotate(180) }
+                    ActionItem(Icons.Default.ContentCopy, stringResource(R.string.organize_duplicate), onDuplicate)
+                    ActionItem(Icons.Outlined.DeleteOutline, stringResource(R.string.delete), onDelete)
+                } else {
+                    ActionItem(Icons.Default.SelectAll, stringResource(R.string.select_all), onSelectAll)
+                    ActionItem(Icons.Default.PostAdd, stringResource(R.string.organize_insert), onInsert)
+                    ActionItem(Icons.Default.SwapVert, stringResource(R.string.organize_reverse), onReverse)
+                    ActionItem(Icons.Default.BrandingWatermark, stringResource(R.string.organize_watermark), onWatermark)
                 }
             }
         }
     }
 }
+
+@Composable
+fun ActionItem(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 6.dp)
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.height(4.dp))
+        Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+    }
+}
+
+private val GridPadding = PaddingValues(12.dp)

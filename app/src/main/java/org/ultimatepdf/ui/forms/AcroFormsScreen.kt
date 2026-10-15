@@ -1,11 +1,15 @@
 package org.ultimatepdf.ui.forms
 
+import org.ultimatepdf.R
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.pluralStringResource
 import android.widget.Toast
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DynamicForm
 import androidx.compose.material.icons.filled.Save
@@ -28,6 +32,8 @@ import java.io.File
 fun AcroFormsScreen(
     currentDocument: DocumentModel?,
     pdfEngine: PdfEngine,
+    onSaved: suspend (File) -> Boolean,
+    onBack: () -> Unit,
     isTablet: Boolean = false
 ) {
     val context = LocalContext.current
@@ -59,7 +65,12 @@ fun AcroFormsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Interactive Forms (AcroForms)", fontWeight = FontWeight.Bold) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
+                    }
+                },
+                title = { Text(stringResource(R.string.tool_forms_short)) },
                 actions = {
                     Button(
                         onClick = {
@@ -72,12 +83,10 @@ fun AcroFormsScreen(
                                         fieldValues = fieldValues.toMap(),
                                         outputFile = outFile
                                     )
+                                    // The filled form replaces the open document (or is saved as a copy).
+                                    val delivered = ok && onSaved(outFile)
                                     isSaving = false
-                                    if (ok) {
-                                        Toast.makeText(context, "Saved filled form to ${outFile.name}", Toast.LENGTH_LONG).show()
-                                    } else {
-                                        Toast.makeText(context, "Error saving form", Toast.LENGTH_SHORT).show()
-                                    }
+                                    Toast.makeText(context, if (delivered) R.string.forms_saved else R.string.forms_error, Toast.LENGTH_SHORT).show()
                                 }
                             }
                         },
@@ -87,9 +96,7 @@ fun AcroFormsScreen(
                         if (isSaving) {
                             CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary)
                         } else {
-                            Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Save Form")
+                            Text(stringResource(R.string.save))
                         }
                     }
                 }
@@ -106,7 +113,7 @@ fun AcroFormsScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("Open a PDF in the Viewer tab to detect and fill AcroForms.")
+                    Text(stringResource(R.string.choose_pdf))
                 }
             } else if (isLoading) {
                 Box(
@@ -131,7 +138,7 @@ fun AcroFormsScreen(
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            text = "No interactive AcroForm fields detected in this PDF.",
+                            text = stringResource(R.string.forms_none),
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -155,7 +162,7 @@ fun AcroFormsScreen(
                                 Icon(Icons.Default.DynamicForm, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                                 Spacer(Modifier.width(12.dp))
                                 Text(
-                                    text = "Found ${formFields.size} form field(s). Edit the values below and tap 'Save Form'.",
+                                    text = pluralStringResource(R.plurals.forms_found, formFields.size, formFields.size),
                                     style = MaterialTheme.typography.bodyMedium
                                 )
                             }
@@ -198,7 +205,7 @@ fun AcroFormsScreen(
                                             horizontalArrangement = Arrangement.SpaceBetween,
                                             modifier = Modifier.fillMaxWidth()
                                         ) {
-                                            Text("Checked", style = MaterialTheme.typography.bodyMedium)
+                                            Text(stringResource(R.string.forms_checked), style = MaterialTheme.typography.bodyMedium)
                                             Switch(
                                                 checked = isChecked,
                                                 onCheckedChange = { checked ->

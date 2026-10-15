@@ -11,7 +11,9 @@ data class DocumentModel(
     val pageCount: Int,
     val sizeBytes: Long = 0L,
     val isEncrypted: Boolean = false,
-    val isReadOnly: Boolean = false
+    val isReadOnly: Boolean = false,
+    /** Increments every time the engine (re)opens a file, so cached page renders are refreshed after a save. */
+    val revision: Int = 0
 )
 
 /**

@@ -3,6 +3,8 @@
 > **The Ultimate Open-Source Adobe Acrobat Replacement for Android (Smartphones & Tablets)**  
 > Built with modern **Jetpack Compose**, **Material 3**, **PdfBox-Android**, **CameraX**, and **Bouncy Castle**.
 
+**Produced by [Museo Virtual Nacional](https://museovirtualnacional.com)** · package `com.museovirtualnacional.updf` · version 1.0
+
 Ultimate PDF unifies the finest architectural innovations and battle-tested components from the leading open-source Android and desktop PDF ecosystems into a single, cohesive, responsive mobile application for phones and tablets.
 
 ---
@@ -15,8 +17,8 @@ Ultimate PDF synthesizes technical breakthroughs from nine premier open-source P
 |---|---|---|---|---|---|
 | **MakeACopy** | Document Scanner & OCR | Edge detection, perspective warping, OCR layout analysis, dual-layer searchable PDF generation | Apache 2.0 | `egdels/makeacopy` | Searchable PDF generator using `RenderingMode.NEITHER` with matrix token positioning |
 | **FairScan** | Lightweight CameraX Scanner | Modern Jetpack Compose UI, CameraX capture lifecycle, responsive cropping handles | GPL-3.0 | `pynicolas/FairScan` | Interactive 4-point quadrilateral crop overlay with real-time feedback |
-| **AnonPDF** | Non-Destructive Page Ops | Immutable `EditPlan` and `EditOp` history folding, zero-loss page manipulation, undo/redo | GPL-3.0 | `FanFeast/anonpdf` | Core Page Organizer engine: rotate, reorder, crop, insert, watermark without disk thrashing |
-| **PDF Converter (Swati)** | Swiss-Army Utilities | Batch operations: merge, split, encrypt, decrypt, watermark, text/image extraction | Apache 2.0 | `Swati4star/Images-to-PDF` | The PDF Tools toolbox: AES-256 security, multi-file merging, range splitting, asset ripping |
+| **AnonPDF** | Non-Destructive Page Ops | Immutable `EditPlan` and `EditOp` history folding, zero-loss page manipulation, undo/redo | MIT | `FanFeast/anonpdf` | Core Page Organizer engine: rotate, reorder, crop, insert, watermark without disk thrashing |
+| **PDF Converter (Swati)** | Swiss-Army Utilities | Batch operations: merge, split, encrypt, decrypt, watermark, text/image extraction | GPL-3.0 | `Swati4star/Images-to-PDF` | The PDF Tools toolbox: AES-256 security, multi-file merging, range splitting, asset ripping |
 | **Open PDF Studio** | Annotations & Vector Markup | Highlighters, freehand ink, vector shapes (rectangles, arrows, notes), standard XFDF | LGPL-3.0 | `OpenAEC-Foundation` | Interactive annotation canvas with stylus pen support and multi-color palette |
 | **PdfBox-Android** | Structural Manipulation & Forms | Native Apache PDFBox port for Android, full AcroForms support, dictionary manipulation | Apache 2.0 | `TomRoush/PdfBox-Android` | Deep PDF object manipulation, AcroForm field serialization, document assembly |
 | **MuPDF / Artifex** | High-Speed Rendering | Fast rasterization, memory efficiency, viewport tile rendering | AGPL-3.0 / Comm. | `ArtifexSoftware` | Dual-engine rendering architecture (Native `PdfRenderer` + high-DPI scaling) |

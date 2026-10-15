@@ -1,347 +1,205 @@
 package org.ultimatepdf.ui.scanner
 
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.PointF
+import android.Manifest
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.launch
-import org.ultimatepdf.core.model.QuadCorners
+import org.ultimatepdf.R
 import org.ultimatepdf.core.model.ScanFilter
-import org.ultimatepdf.core.model.ScannedPage
+import org.ultimatepdf.core.pdf.ScanOutputPage
 import org.ultimatepdf.core.pdf.SearchablePdfGenerator
-import org.ultimatepdf.core.scanner.DocumentDetector
 import org.ultimatepdf.core.scanner.OcrEngine
-import org.ultimatepdf.core.scanner.PerspectiveCorrector
+import org.ultimatepdf.core.scanner.ScanMode
+import org.ultimatepdf.core.scanner.ScanPipeline
+import org.ultimatepdf.core.signature.SignatureImages
+import org.ultimatepdf.ui.components.ScreenTopBar
+import org.ultimatepdf.ui.components.rememberSaveFileLauncher
 import java.io.File
-import java.util.UUID
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Document scanner: live camera with edge detection, batch capture, then review (crop,
+ * filters, rotation) and save as a searchable PDF the user files wherever they want.
+ */
 @Composable
 fun DocumentScannerScreen(
-    onPdfCreated: (File) -> Unit,
-    isTablet: Boolean = false
+    onPdfCreated: (Uri) -> Unit,
+    onBack: () -> Unit,
+    @Suppress("UNUSED_PARAMETER") isTablet: Boolean = false
 ) {
     val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
+    val scope = rememberCoroutineScope()
+    val pipeline = remember { ScanPipeline() }
+    val ocr = remember { OcrEngine(context) }
+    val session = remember { ScanSession(File(context.cacheDir, "scan_${System.currentTimeMillis()}"), pipeline) }
+    var reviewing by rememberSaveable { mutableStateOf(false) }
+    var progress by remember { mutableStateOf<String?>(null) }
+    var confirmDiscard by remember { mutableStateOf(false) }
+    var hasCamera by remember {
+        mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
+    }
 
-    val detector = remember { DocumentDetector() }
-    val corrector = remember { PerspectiveCorrector() }
-    val ocrEngine = remember { OcrEngine(context) }
-    val searchablePdfGen = remember { SearchablePdfGenerator() }
+    val requestCamera = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { hasCamera = it }
+    LaunchedEffect(Unit) { if (!hasCamera) requestCamera.launch(Manifest.permission.CAMERA) }
 
-    var rawBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var corners by remember { mutableStateOf<QuadCorners?>(null) }
-    var warpedBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var activeFilter by remember { mutableStateOf(ScanFilter.MAGIC_COLOR) }
+    val importImages = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        scope.launch {
+            progress = context.getString(R.string.scan_loading)
+            for (uri in uris) SignatureImages.loadUpright(context, uri, MAX_PHOTO_SIZE)?.let { session.add(it) }
+            progress = null
+            if (session.captures.isNotEmpty()) reviewing = true
+        }
+    }
 
-    var isProcessing by remember { mutableStateOf(false) }
-    var statusText by remember { mutableStateOf("") }
+    val saveLauncher = rememberSaveFileLauncher { uri ->
+        progress = null
+        if (uri != null) {
+            session.clear()
+            onPdfCreated(uri)
+        }
+    }
 
-    val imagePicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        uri?.let {
-            coroutineScope.launch {
-                isProcessing = true
-                statusText = "Loading image..."
-                try {
-                    context.contentResolver.openInputStream(it)?.use { stream ->
-                        val bmp = BitmapFactory.decodeStream(stream)
-                        rawBitmap = bmp
-                        val detected = detector.detectDocumentCorners(bmp)
-                        corners = detected
-                        warpedBitmap = null
-                    }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                } finally {
-                    isProcessing = false
-                    statusText = ""
+    fun leave() {
+        if (session.captures.isEmpty()) onBack() else confirmDiscard = true
+    }
+
+    fun save() {
+        scope.launch {
+            val captures = session.captures.toList()
+            val pages = mutableListOf<ScanOutputPage>()
+            try {
+                captures.forEachIndexed { i, capture ->
+                    progress = context.getString(R.string.scan_processing, i + 1, captures.size)
+                    pipeline.process(capture.file, capture.width, capture.corners, capture.filter, capture.rotation, session.mode, MAX_PHOTO_SIZE, capture.filterIntensity)
+                        .forEach { pages += ScanOutputPage(it, null, capture.filter == ScanFilter.BLACK_WHITE) }
                 }
+                val output = if (session.mode == ScanMode.ID_CARD && pages.size == 2) {
+                    listOf(ScanOutputPage(pipeline.composeIdCard(pages[0].image, pages[1].image), null))
+                } else {
+                    pages
+                }
+                val finished = if (session.ocrEnabled) {
+                    output.mapIndexed { i, page ->
+                        progress = context.getString(R.string.scan_recognizing, i + 1, output.size)
+                        val text = runCatching { ocr.recognize(page.image) }.getOrNull()
+                        ScanOutputPage(page.image, text, page.isBlackAndWhite)
+                    }
+                } else {
+                    output
+                }
+                progress = context.getString(R.string.scan_running)
+                val file = File(context.cacheDir, "scan_${System.currentTimeMillis()}.pdf")
+                SearchablePdfGenerator().createSearchablePdf(finished, file)
+                finished.forEach { it.image.recycle() }
+                val name = SimpleDateFormat("yyyy-MM-dd HH.mm", Locale.getDefault()).format(Date())
+                saveLauncher.save(context.getString(R.string.scan_file_name, name), file)
+            } catch (e: Exception) {
+                progress = null
+                Toast.makeText(context, R.string.scan_failed, Toast.LENGTH_LONG).show()
             }
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Smart Scanner & OCR", fontWeight = FontWeight.Bold) },
-                actions = {
-                    FilledTonalButton(
-                        onClick = { imagePicker.launch("image/*") },
-                        modifier = Modifier.padding(end = 8.dp)
-                    ) {
-                        Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Import Image")
-                    }
-                }
-            )
+    BackHandler {
+        when {
+            progress != null -> Unit
+            reviewing -> reviewing = false
+            else -> leave()
         }
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-        ) {
-            if (rawBitmap == null) {
-                // Empty view with scanner prompt
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(24.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.DocumentScanner,
-                            contentDescription = null,
-                            modifier = Modifier.size(90.dp),
-                            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
-                        )
-                        Text(
-                            text = "Scan Paper Documents with Edge Detection & OCR",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            text = "Automatic quadrilateral detection, perspective flattening, and hidden OCR text layer embedding (MakeACopy & FairScan architecture).",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Button(
-                            onClick = { imagePicker.launch("image/*") },
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Icon(Icons.Default.CameraAlt, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Text("Capture or Import Document")
-                        }
-                    }
+    }
+
+    when {
+        reviewing && session.captures.isNotEmpty() -> ScanReview(
+            session = session,
+            pipeline = pipeline,
+            onAddMore = { reviewing = false },
+            onSave = ::save,
+            onBack = { reviewing = false }
+        )
+        hasCamera -> ScanCamera(
+            session = session,
+            onCaptured = { photo ->
+                scope.launch {
+                    session.add(photo)
+                    photo.recycle()
+                    // An ID card is done after its back side.
+                    if (session.mode == ScanMode.ID_CARD && session.captures.size == 2) reviewing = true
                 }
-            } else {
-                // Main editor workspace
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .background(Color.Black),
-                    contentAlignment = Alignment.Center
-                ) {
-                    val currentDisplay = warpedBitmap ?: rawBitmap!!
+            },
+            onImport = { importImages.launch("image/*") },
+            onReview = { reviewing = true },
+            onClose = ::leave
+        )
+        else -> NoCameraPermission(
+            onGrant = { requestCamera.launch(Manifest.permission.CAMERA) },
+            onImport = { importImages.launch("image/*") },
+            onBack = ::leave
+        )
+    }
 
-                    Image(
-                        bitmap = currentDisplay.asImageBitmap(),
-                        contentDescription = "Document Scan",
-                        modifier = Modifier.fillMaxSize()
-                    )
-
-                    // Draw interactive corner handles if not yet warped
-                    if (warpedBitmap == null && corners != null) {
-                        val currentCorners = corners!!
-                        InteractiveCropOverlay(
-                            corners = currentCorners,
-                            bitmapWidth = rawBitmap!!.width.toFloat(),
-                            bitmapHeight = rawBitmap!!.height.toFloat(),
-                            onCornersChanged = { corners = it }
-                        )
-                    }
-
-                    if (isProcessing) {
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
-                            modifier = Modifier.padding(16.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                                Text(statusText, style = MaterialTheme.typography.bodyMedium)
-                            }
-                        }
-                    }
-                }
-
-                // Bottom toolbar for adjustments and Searchable PDF generation
-                Surface(
-                    tonalElevation = 4.dp,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        modifier = Modifier.padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        if (warpedBitmap == null) {
-                            // Stage 1: Crop and Warp
-                            Button(
-                                onClick = {
-                                    val bmp = rawBitmap ?: return@Button
-                                    val c = corners ?: return@Button
-                                    val warped = corrector.warpPerspective(bmp, c)
-                                    val filtered = corrector.applyFilter(warped, activeFilter)
-                                    warpedBitmap = filtered
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(10.dp)
-                            ) {
-                                Icon(Icons.Default.CropFree, contentDescription = null)
-                                Spacer(Modifier.width(8.dp))
-                                Text("Correct Perspective & Warp")
-                            }
-                        } else {
-                            // Stage 2: Filter selection & OCR Searchable PDF creation
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                FilterChip(
-                                    selected = activeFilter == ScanFilter.MAGIC_COLOR,
-                                    onClick = {
-                                        activeFilter = ScanFilter.MAGIC_COLOR
-                                        warpedBitmap = corrector.applyFilter(warpedBitmap!!, ScanFilter.MAGIC_COLOR)
-                                    },
-                                    label = { Text("Magic Color") }
-                                )
-                                FilterChip(
-                                    selected = activeFilter == ScanFilter.GRAYSCALE,
-                                    onClick = {
-                                        activeFilter = ScanFilter.GRAYSCALE
-                                        warpedBitmap = corrector.applyFilter(warpedBitmap!!, ScanFilter.GRAYSCALE)
-                                    },
-                                    label = { Text("Grayscale") }
-                                )
-                                FilterChip(
-                                    selected = activeFilter == ScanFilter.BLACK_WHITE,
-                                    onClick = {
-                                        activeFilter = ScanFilter.BLACK_WHITE
-                                        warpedBitmap = corrector.applyFilter(warpedBitmap!!, ScanFilter.BLACK_WHITE)
-                                    },
-                                    label = { Text("B&W") }
-                                )
-                            }
-
-                            Button(
-                                onClick = {
-                                    coroutineScope.launch {
-                                        isProcessing = true
-                                        statusText = "Running OCR & creating Searchable PDF..."
-
-                                        val finalBmp = warpedBitmap ?: return@launch
-                                        val ocrWords = ocrEngine.recognizeText(finalBmp)
-
-                                        val scannedPage = ScannedPage(
-                                            id = UUID.randomUUID().toString(),
-                                            rawImage = rawBitmap!!,
-                                            corners = corners!!,
-                                            processedImage = finalBmp,
-                                            filter = activeFilter,
-                                            ocrWords = ocrWords
-                                        )
-
-                                        val outFile = File(context.cacheDir, "scan_searchable_${System.currentTimeMillis()}.pdf")
-                                        val success = searchablePdfGen.createSearchablePdf(
-                                            pages = listOf(scannedPage),
-                                            outputFile = outFile
-                                        )
-
-                                        isProcessing = false
-                                        statusText = ""
-
-                                        if (success) {
-                                            Toast.makeText(context, "Searchable PDF generated with ${ocrWords.size} OCR tokens!", Toast.LENGTH_LONG).show()
-                                            onPdfCreated(outFile)
-                                        } else {
-                                            Toast.makeText(context, "Failed to create searchable PDF", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(10.dp)
-                            ) {
-                                Icon(Icons.Default.AutoAwesome, contentDescription = null)
-                                Spacer(Modifier.width(8.dp))
-                                Text("Generate Searchable PDF (OCR Layer)")
-                            }
-                        }
-                    }
+    progress?.let { message ->
+        AlertDialog(
+            onDismissRequest = {},
+            confirmButton = {},
+            text = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(28.dp))
+                    Spacer(Modifier.width(16.dp))
+                    Text(message)
                 }
             }
-        }
+        )
+    }
+
+    if (confirmDiscard) {
+        AlertDialog(
+            onDismissRequest = { confirmDiscard = false },
+            title = { Text(stringResource(R.string.scan_discard_title)) },
+            text = { Text(stringResource(R.string.scan_discard_text)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDiscard = false
+                    session.clear()
+                    onBack()
+                }) { Text(stringResource(R.string.discard), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { confirmDiscard = false }) { Text(stringResource(R.string.cancel)) } }
+        )
     }
 }
 
 @Composable
-fun InteractiveCropOverlay(
-    corners: QuadCorners,
-    bitmapWidth: Float,
-    bitmapHeight: Float,
-    onCornersChanged: (QuadCorners) -> Unit
-) {
-    Canvas(
-        modifier = Modifier.fillMaxSize()
-    ) {
-        val scaleX = size.width / bitmapWidth
-        val scaleY = size.height / bitmapHeight
-
-        val pTL = Offset(corners.topLeft.x * scaleX, corners.topLeft.y * scaleY)
-        val pTR = Offset(corners.topRight.x * scaleX, corners.topRight.y * scaleY)
-        val pBR = Offset(corners.bottomRight.x * scaleX, corners.bottomRight.y * scaleY)
-        val pBL = Offset(corners.bottomLeft.x * scaleX, corners.bottomLeft.y * scaleY)
-
-        // Draw boundary polygon path
-        val path = Path().apply {
-            moveTo(pTL.x, pTL.y)
-            lineTo(pTR.x, pTR.y)
-            lineTo(pBR.x, pBR.y)
-            lineTo(pBL.x, pBL.y)
-            close()
-        }
-
-        drawPath(
-            path = path,
-            color = Color(0xFF00E676),
-            style = Stroke(width = 4.dp.toPx())
-        )
-
-        // Draw corner pins
-        val pinRadius = 14.dp.toPx()
-        val pinColor = Color(0xFF00E676)
-        val pinCenterColor = Color.White
-
-        listOf(pTL, pTR, pBR, pBL).forEach { p ->
-            drawCircle(color = pinColor, radius = pinRadius, center = p)
-            drawCircle(color = pinCenterColor, radius = pinRadius * 0.45f, center = p)
+private fun NoCameraPermission(onGrant: () -> Unit, onImport: () -> Unit, onBack: () -> Unit) {
+    Scaffold(topBar = { ScreenTopBar(stringResource(R.string.tool_scan_short), onBack) }) { padding ->
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(32.dp)
+        ) {
+            Text(stringResource(R.string.scan_camera_needed), textAlign = TextAlign.Center)
+            Button(onClick = onGrant) { Text(stringResource(R.string.scan_allow_camera)) }
+            OutlinedButton(onClick = onImport) { Text(stringResource(R.string.scan_import)) }
         }
     }
 }

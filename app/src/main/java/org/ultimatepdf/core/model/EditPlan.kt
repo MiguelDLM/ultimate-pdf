@@ -49,6 +49,11 @@ data class InsertPages(
     override fun describe() = "Insert $pageCount page(s) from \"$label\" at position ${targetPosition + 1}"
 }
 
+/** Inserts a copy of each target page right after it. */
+data class DuplicatePages(val targets: Set<Int>) : EditOp {
+    override fun describe() = "Duplicate ${formatTargets(targets)}"
+}
+
 data object ReversePages : EditOp {
     override fun describe() = "Reverse page order"
 }
@@ -113,9 +118,10 @@ data class EditPlan(
                     state.sourceIndex != index || !state.isUntouched
                 }
 
+    /** Applies [transform] to the pages at the given positions in [pages]. */
     fun mapTargets(targets: Set<Int>, transform: (PageState) -> PageState): EditPlan {
         return copy(pages = pages.mapIndexed { idx, state ->
-            if (targets.contains(idx) || targets.contains(state.sourceIndex)) {
+            if (targets.contains(idx)) {
                 transform(state)
             } else {
                 state
@@ -176,6 +182,12 @@ object EditPlanBuilder {
 
         is ReversePages -> {
             plan.copy(pages = plan.pages.reversed())
+        }
+
+        is DuplicatePages -> {
+            plan.copy(pages = plan.pages.flatMapIndexed { index, page ->
+                if (index in op.targets) listOf(page, page) else listOf(page)
+            })
         }
 
         is SetWatermark -> {

@@ -9,6 +9,7 @@ import android.graphics.Paint
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import android.provider.OpenableColumns
 import android.util.Log
 import android.util.LruCache
 import com.tom_roush.pdfbox.pdmodel.PDDocument
@@ -39,8 +40,12 @@ class PdfEngine(private val context: Context) {
 
     private var currentPfd: ParcelFileDescriptor? = null
     private var pdfRenderer: PdfRenderer? = null
-    private val bitmapCache: LruCache<String, Bitmap> = LruCache(48)
+    // Sized in bytes: a full-width page bitmap is several MB, so an entry count would risk OOM.
+    private val bitmapCache = object : LruCache<String, Bitmap>((Runtime.getRuntime().maxMemory() / 6).toInt()) {
+        override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
+    }
     private val renderMutex = Mutex()
+    private var revision = 0
 
     companion object {
         private const val TAG = "PdfEngine"
@@ -66,7 +71,8 @@ class PdfEngine(private val context: Context) {
             uri = uri,
             name = fileName,
             pageCount = renderer.pageCount,
-            sizeBytes = fileSize
+            sizeBytes = fileSize,
+            revision = ++revision
         )
     }
 
@@ -247,7 +253,13 @@ class PdfEngine(private val context: Context) {
     }
 
     private fun queryFileName(uri: Uri): String {
-        return uri.lastPathSegment?.substringAfterLast('/') ?: "document.pdf"
+        val displayName = try {
+            context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+        } catch (e: Exception) {
+            null
+        }
+        return displayName ?: uri.lastPathSegment?.substringAfterLast('/') ?: "document.pdf"
     }
 
     fun close() {

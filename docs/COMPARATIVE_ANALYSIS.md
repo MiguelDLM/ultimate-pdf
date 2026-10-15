@@ -10,8 +10,8 @@ This document examines the 9 reference open-source projects evaluated during the
 |---|---|---|---|---|---|---|
 | 1 | **MakeACopy** (`egdels/makeacopy`) | Scanner & OCR | Robust OpenCV edge detection, dual-layer searchable PDF generation with hidden text | Heavy C++ native dependencies, traditional Views architecture | Apache 2.0 | Dual-layer searchable PDF algorithm with `RenderingMode.NEITHER` & token matrix mapping |
 | 2 | **FairScan** (`pynicolas/FairScan`) | Lightweight Scanner | Modern Jetpack Compose, CameraX integration, TFLite/LiteRT segmentation | Focuses exclusively on scanning; no viewer or document editing | GPL-3.0 | Modern Compose CameraX UX, 4-corner interactive cropping handle overlay |
-| 3 | **AnonPDF** (`FanFeast/anonpdf`) | Non-Destructive Editing | Immutable `EditPlan` & `EditOp` history folding, memory-friendly operation replay | Lacks advanced form filling (AcroForms) and cryptographic PAdES signatures | GPL-3.0 | The core Page Organizer and non-destructive editing pipeline |
-| 4 | **Images-to-PDF** (`Swati4star`) | Utility Suite | Immense catalog of utility tools: merge, split, password encrypt/decrypt, watermark, image extract | Legacy Android Views and older iText dependencies with licensing baggage | Apache 2.0 | Re-implemented utility catalog on modern PdfBox-Android (AES-256, merge, split, extract) |
+| 3 | **AnonPDF** (`FanFeast/anonpdf`) | Non-Destructive Editing | Immutable `EditPlan` & `EditOp` history folding, memory-friendly operation replay | Lacks advanced form filling (AcroForms) and cryptographic PAdES signatures | MIT | The core Page Organizer and non-destructive editing pipeline |
+| 4 | **Images-to-PDF** (`Swati4star`) | Utility Suite | Immense catalog of utility tools: merge, split, password encrypt/decrypt, watermark, image extract | Legacy Android Views and older iText dependencies with licensing baggage | GPL-3.0 | Re-implemented utility catalog on modern PdfBox-Android (AES-256, merge, split, extract) |
 | 5 | **Open PDF Studio** (`OpenAEC-Foundation`) | Annotations & Forms | Comprehensive vector annotations (highlight, underline, sticky notes, shapes), XFDF support | Desktop-first (Rust/Tauri backend); not directly portable to Android JNI | LGPL-3.0 | Annotation data models, vector shape specs, and stylus drawing interaction patterns |
 | 6 | **PdfBox-Android** (`TomRoush`) | PDF Core | Complete native Java port of Apache PDFBox, deep AcroForm support, font embedding | Rendering is slower than native C++ engines like PDFium or PdfRenderer | Apache 2.0 | Primary PDF object model, AcroForm field extractor/serializer, cloner, security engine |
 | 7 | **MuPDF** (`ArtifexSoftware`) | High-Speed Engine | Ultra-fast C/C++ rendering, comprehensive PDF spec compliance, tile rendering | Viral AGPL-3.0 license or expensive commercial license required | AGPL-3.0 / Commercial | Viewport tile-rendering concepts, viewport clipping and zoom scaling mathematics |
@@ -23,8 +23,8 @@ This document examines the 9 reference open-source projects evaluated during the
 ## 2. Licensing & Decoupling Strategy
 
 A key challenge when building on open-source projects is managing differing licenses:
-- **Apache 2.0**: Very permissive. Used by PdfBox-Android, MakeACopy, Images-to-PDF, PdfiumAndroid, Open-PDF-Sign, and Ultimate PDF.
-- **GPL-3.0 / LGPL-3.0**: FairScan and AnonPDF use GPL-3.0; Open PDF Studio uses LGPL-3.0.
+- **Apache 2.0 / MIT**: Permissive. Used by PdfBox-Android, MakeACopy, PdfiumAndroid, Open-PDF-Sign (Apache 2.0) and AnonPDF (MIT).
+- **GPL-3.0 / LGPL-3.0**: FairScan and Images-to-PDF use GPL-3.0; Open PDF Studio uses LGPL-3.0.
 - **AGPL-3.0**: MuPDF uses AGPL-3.0 which has viral copyleft implications.
 
 ### How Ultimate PDF Solves This:

@@ -206,4 +206,78 @@ class PdfSecurityManager(private val context: Context) {
         }
         images
     }
+
+    /**
+     * Compresses PDF file size by downsampling embedded images and re-compressing them as optimized JPEGs.
+     */
+    suspend fun compressDocument(
+        sourceUri: Uri,
+        level: CompressionLevel,
+        outputFile: File
+    ): CompressionResult = withContext(Dispatchers.IO) {
+        var originalSize = 0L
+        var downsampledCount = 0
+        try {
+            context.contentResolver.openFileDescriptor(sourceUri, "r")?.use { pfd ->
+                originalSize = pfd.statSize
+            }
+            context.contentResolver.openInputStream(sourceUri)?.use { input ->
+                PDDocument.load(input).use { doc ->
+                    for (page in doc.pages) {
+                        val resources = page.resources ?: continue
+                        for (xObjectName in resources.xObjectNames) {
+                            val xObject = resources.getXObject(xObjectName)
+                            if (xObject is PDImageXObject) {
+                                val origBmp = xObject.image ?: continue
+                                val maxSide = maxOf(origBmp.width, origBmp.height)
+                                val needsScale = maxSide > level.maxDimension
+                                val newBmp = if (needsScale) {
+                                    val scale = level.maxDimension.toFloat() / maxSide
+                                    val w = (origBmp.width * scale).toInt().coerceAtLeast(1)
+                                    val h = (origBmp.height * scale).toInt().coerceAtLeast(1)
+                                    Bitmap.createScaledBitmap(origBmp, w, h, true)
+                                } else {
+                                    origBmp
+                                }
+                                val newImageXObject = com.tom_roush.pdfbox.pdmodel.graphics.image.JPEGFactory.createFromImage(doc, newBmp, level.quality)
+                                if (needsScale && newBmp !== origBmp) {
+                                    newBmp.recycle()
+                                }
+                                resources.put(xObjectName, newImageXObject)
+                                downsampledCount++
+                            }
+                        }
+                    }
+                    FileOutputStream(outputFile).use { out ->
+                        doc.save(out)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error compressing PDF", e)
+        }
+        val finalSize = outputFile.length()
+        CompressionResult(
+            originalSizeBytes = if (originalSize > 0) originalSize else finalSize,
+            compressedSizeBytes = finalSize,
+            imagesDownsampled = downsampledCount
+        )
+    }
+}
+
+enum class CompressionLevel(val maxDimension: Int, val quality: Float) {
+    LOW(2048, 0.85f),
+    MEDIUM(1400, 0.70f),
+    HIGH(900, 0.50f)
+}
+
+data class CompressionResult(
+    val originalSizeBytes: Long,
+    val compressedSizeBytes: Long,
+    val imagesDownsampled: Int
+) {
+    val savingsPercent: Int
+        get() = if (originalSizeBytes > 0 && originalSizeBytes > compressedSizeBytes) {
+            (((originalSizeBytes - compressedSizeBytes).toFloat() / originalSizeBytes) * 100).toInt()
+        } else 0
 }

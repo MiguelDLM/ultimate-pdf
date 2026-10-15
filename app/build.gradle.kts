@@ -1,6 +1,14 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+}
+
+// Release signing: keystore.properties (kept out of version control) points to the keystore.
+val keystoreProperties = Properties().apply {
+    val file = rootProject.file("keystore.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
 }
 
 android {
@@ -8,20 +16,41 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "org.ultimatepdf"
+        applicationId = "com.museovirtualnacional.updf"
         minSdk = 26
         targetSdk = 36
         versionCode = 1
-        versionName = "1.0.0"
+        versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
         }
+
+        // OpenCV and ML Kit ship native code per CPU (~33 MB on arm64, ~67 MB more on x86_64).
+        // 64-bit ARM covers current phones; add "x86_64" here to run on an emulator.
+        ndk {
+            abiFilters += setOf("arm64-v8a")
+        }
+    }
+
+    signingConfigs {
+        create("release") {
+            val storePath = keystoreProperties.getProperty("storeFile")
+            if (!storePath.isNullOrBlank()) {
+                storeFile = rootProject.file(storePath)
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
     }
 
     buildTypes {
         release {
+            if (keystoreProperties.getProperty("storeFile") != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -88,6 +117,10 @@ dependencies {
 
     // PDFBox-Android (Forms, PDF Structure Rebuild, Text Layer Generation, and Bouncy Castle crypto)
     implementation(libs.pdfbox.android)
+
+    // Scanner: OCR + edge detection / perspective / adaptive filters
+    implementation(libs.mlkit.text.recognition)
+    implementation(libs.opencv)
 
     // Testing
     testImplementation(libs.junit)

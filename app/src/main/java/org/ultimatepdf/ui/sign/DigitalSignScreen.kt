@@ -1,5 +1,7 @@
 package org.ultimatepdf.ui.sign
 
+import androidx.compose.ui.res.stringResource
+import org.ultimatepdf.R
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
@@ -16,6 +18,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -43,24 +46,22 @@ import java.io.File
 fun DigitalSignScreen(
     currentDocument: DocumentModel?,
     signatureService: DigitalSignatureService,
+    onSigned: suspend (File) -> Boolean,
+    onBack: () -> Unit,
     isTablet: Boolean = false
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
     if (currentDocument == null) {
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center
-        ) {
-            Text("Open a PDF in the Viewer tab first to apply a digital signature.")
-        }
+        LaunchedEffect(Unit) { onBack() }
         return
     }
 
-    var signerName by remember { mutableStateOf("John Doe") }
-    var reason by remember { mutableStateOf("I approve and endorse this document") }
-    var location by remember { mutableStateOf("Madrid, Spain") }
+    var signerName by remember { mutableStateOf("") }
+    val defaultReason = stringResource(R.string.cert_reason_default)
+    var reason by remember { mutableStateOf(defaultReason) }
+    var location by remember { mutableStateOf("") }
     var selectedCertUri by remember { mutableStateOf<Uri?>(null) }
     var certPassword by remember { mutableStateOf("") }
     var isSigning by remember { mutableStateOf(false) }
@@ -78,7 +79,12 @@ fun DigitalSignScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("PAdES / PKCS#7 Digital Sign", fontWeight = FontWeight.Bold) }
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
+                    }
+                },
+                title = { Text(stringResource(R.string.tool_certificate_short)) }
             )
         }
     ) { padding ->
@@ -102,14 +108,14 @@ fun DigitalSignScreen(
                     Icon(Icons.Default.VerifiedUser, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.width(12.dp))
                     Text(
-                        text = "Signs PDF with cryptographic X.509 certificate (PAdES standard) and visual handwritten stamp.",
+                        text = stringResource(R.string.cert_intro),
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }
             }
 
             // 1. Signature Pad Canvas
-            Text("1. Draw Handwritten Signature", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.cert_draw), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -168,31 +174,31 @@ fun DigitalSignScreen(
                     },
                     modifier = Modifier.align(Alignment.TopEnd)
                 ) {
-                    Icon(Icons.Default.Clear, contentDescription = "Clear Signature", tint = Color.Gray)
+                    Icon(Icons.Default.Clear, contentDescription = stringResource(R.string.cert_clear), tint = Color.Gray)
                 }
             }
 
             // 2. Cryptographic Certificate details
-            Text("2. Certificate & Signer Metadata", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.cert_details), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
 
             OutlinedTextField(
                 value = signerName,
                 onValueChange = { signerName = it },
-                label = { Text("Signer Name") },
+                label = { Text(stringResource(R.string.cert_name)) },
                 modifier = Modifier.fillMaxWidth()
             )
 
             OutlinedTextField(
                 value = reason,
                 onValueChange = { reason = it },
-                label = { Text("Signature Reason") },
+                label = { Text(stringResource(R.string.cert_reason)) },
                 modifier = Modifier.fillMaxWidth()
             )
 
             OutlinedTextField(
                 value = location,
                 onValueChange = { location = it },
-                label = { Text("Location") },
+                label = { Text(stringResource(R.string.cert_location)) },
                 modifier = Modifier.fillMaxWidth()
             )
 
@@ -204,18 +210,18 @@ fun DigitalSignScreen(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = selectedCertUri?.lastPathSegment ?: "No PKCS#12 (.p12/.pfx) Selected",
+                        text = selectedCertUri?.lastPathSegment ?: stringResource(R.string.cert_none),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium
                     )
                     Text(
-                        text = if (selectedCertUri != null) "Digital Certificate Loaded" else "Optional: Will sign as visual stamp without .p12",
+                        text = stringResource(if (selectedCertUri != null) R.string.cert_loaded else R.string.cert_optional),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 FilledTonalButton(onClick = { certPicker.launch(arrayOf("*/*")) }) {
-                    Text("Select .p12")
+                    Text(stringResource(R.string.cert_select))
                 }
             }
 
@@ -223,7 +229,7 @@ fun DigitalSignScreen(
                 OutlinedTextField(
                     value = certPassword,
                     onValueChange = { certPassword = it },
-                    label = { Text("Keystore Password") },
+                    label = { Text(stringResource(R.string.cert_password)) },
                     modifier = Modifier.fillMaxWidth()
                 )
             }
@@ -274,12 +280,10 @@ fun DigitalSignScreen(
                             outputFile = outFile
                         )
 
+                        // The signed file replaces the open document (or is saved as a copy).
+                        val delivered = success && onSigned(outFile)
                         isSigning = false
-                        if (success) {
-                            Toast.makeText(context, "Digitally signed: ${outFile.name}", Toast.LENGTH_LONG).show()
-                        } else {
-                            Toast.makeText(context, "Signing failed", Toast.LENGTH_SHORT).show()
-                        }
+                        Toast.makeText(context, if (delivered) R.string.cert_signed else R.string.cert_failed, Toast.LENGTH_SHORT).show()
                     }
                 },
                 enabled = !isSigning && (strokePaths.isNotEmpty() || signerName.isNotBlank()),
@@ -293,7 +297,7 @@ fun DigitalSignScreen(
                 } else {
                     Icon(Icons.Default.Verified, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text("Apply Digital Signature to Document")
+                    Text(stringResource(R.string.cert_sign))
                 }
             }
         }

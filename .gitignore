@@ -21,6 +21,8 @@ local.properties
 Thumbs.db
 
 # Keystores & sensitive keys
+keystore.properties
+key.properties
 *.jks
 *.keystore
 *.p12

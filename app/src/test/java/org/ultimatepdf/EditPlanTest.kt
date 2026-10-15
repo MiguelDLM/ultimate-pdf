@@ -73,4 +73,20 @@ class EditPlanTest {
         assertNotNull(plan.pageNumbers)
         assertEquals("Page {page} / {total}", plan.pageNumbers?.format)
     }
+
+    @Test
+    fun `duplicate inserts a copy after each target, keeping rotation`() {
+        val ops = listOf(RotatePages(90, setOf(1)), DuplicatePages(setOf(1, 2)))
+        val plan = EditPlanBuilder.build(pageCount = 3, ops = ops)
+        assertEquals(listOf(0, 1, 1, 2, 2), plan.pages.map { it.sourceIndex })
+        assertEquals(90, plan.pages[2].rotationDelta)
+    }
+
+    @Test
+    fun `targets are plan positions, not original page numbers`() {
+        // Move page 3 (source 2) to the front; position 2 now holds source 1.
+        val ops = listOf(MovePage(2, 0), DeletePages(setOf(2)))
+        val plan = EditPlanBuilder.build(pageCount = 4, ops = ops)
+        assertEquals(listOf(2, 0, 3), plan.activePages.map { it.sourceIndex })
+    }
 }

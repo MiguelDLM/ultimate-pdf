@@ -2,86 +2,120 @@ package org.ultimatepdf.core.scanner
 
 import android.graphics.Bitmap
 import android.graphics.PointF
+import org.opencv.android.Utils
+import org.opencv.core.Mat
+import org.opencv.core.MatOfInt
+import org.opencv.core.MatOfPoint
+import org.opencv.core.MatOfPoint2f
+import org.opencv.core.Size
+import org.opencv.imgproc.Imgproc
 import org.ultimatepdf.core.model.QuadCorners
-import kotlin.math.sqrt
+import kotlin.math.max
 
 /**
- * Intelligent document boundary and corner detector inspired by MakeACopy & FairScan.
- * Analyzes image luminance and edge contrasts to find candidate document quadrilaterals.
+ * Finds the four corners of a sheet of paper in a photo or camera frame.
+ *
+ * Edges (Canny with thresholds derived from the image's median) are closed into contours and
+ * the largest convex 4-point polygon wins. White paper on a light desk often has weak edges,
+ * so a second pass segments the bright paper with Otsu's threshold.
  */
 class DocumentDetector {
 
-    /**
-     * Finds the four corner points of a document within a bitmap image.
-     * Orders vertices clockwise: Top-Left, Top-Right, Bottom-Right, Bottom-Left.
-     */
-    fun detectDocumentCorners(bitmap: Bitmap): QuadCorners {
-        val width = bitmap.width.toFloat()
-        val height = bitmap.height.toFloat()
-
-        // Downsample for rapid edge & luminance profiling
-        val sampleW = 200
-        val sampleH = 200
-        val scaled = Bitmap.createScaledBitmap(bitmap, sampleW, sampleH, false)
-
-        val pixels = IntArray(sampleW * sampleH)
-        scaled.getPixels(pixels, 0, sampleW, 0, 0, sampleW, sampleH)
-
-        // Threshold detection: identify contrast boundaries between document page and background
-        var minX = sampleW
-        var maxX = 0
-        var minY = sampleH
-        var maxY = 0
-
-        for (y in 0 until sampleH) {
-            for (x in 0 until sampleW) {
-                val pixel = pixels[y * sampleW + x]
-                val r = (pixel shr 16) and 0xFF
-                val g = (pixel shr 8) and 0xFF
-                val b = pixel and 0xFF
-                val brightness = (0.299 * r + 0.587 * g + 0.114 * b).toInt()
-
-                // High brightness indicates document paper
-                if (brightness > 130) {
-                    if (x < minX) minX = x
-                    if (x > maxX) maxX = x
-                    if (y < minY) minY = y
-                    if (y > maxY) maxY = y
-                }
-            }
-        }
-
-        // Clean up scaled bitmap
-        scaled.recycle()
-
-        // If no clear boundary detected, fallback to comfortable margins (8% inset)
-        if (maxX - minX < 40 || maxY - minY < 40) {
-            return QuadCorners.defaultFor(width, height)
-        }
-
-        val scaleFactorX = width / sampleW
-        val scaleFactorY = height / sampleH
-
-        val left = (minX * scaleFactorX).coerceIn(0f, width)
-        val right = (maxX * scaleFactorX).coerceIn(0f, width)
-        val top = (minY * scaleFactorY).coerceIn(0f, height)
-        val bottom = (maxY * scaleFactorY).coerceIn(0f, height)
-
-        return QuadCorners(
-            topLeft = PointF(left, top),
-            topRight = PointF(right, top),
-            bottomRight = PointF(right, bottom),
-            bottomLeft = PointF(left, bottom)
-        )
+    /** Corners in [bitmap] pixels, or null when no sheet-like shape is found. */
+    fun detect(bitmap: Bitmap): QuadCorners? {
+        val rgba = Mat()
+        Utils.bitmapToMat(bitmap, rgba)
+        val gray = Mat()
+        Imgproc.cvtColor(rgba, gray, Imgproc.COLOR_RGBA2GRAY)
+        rgba.release()
+        return detectInGray(gray).also { gray.release() }
     }
 
     /**
-     * Orders 4 points clockwise: [TL, TR, BR, BL].
+     * Corners in [gray]'s pixels (any size; it is downscaled internally). Used directly on the
+     * camera's luminance plane for live detection.
+     */
+    fun detectInGray(gray: Mat): QuadCorners? {
+        val scale = WORK_SIZE / max(gray.cols(), gray.rows()).toDouble()
+        val small = Mat()
+        Imgproc.resize(gray, small, Size(gray.cols() * scale, gray.rows() * scale), 0.0, 0.0, Imgproc.INTER_AREA)
+        Imgproc.GaussianBlur(small, small, Size(5.0, 5.0), 0.0)
+        val minArea = small.rows() * small.cols() * MIN_AREA_RATIO
+
+        val quad = findQuad(edges(small), minArea) ?: findQuad(otsu(small), minArea)
+        small.release()
+        return quad?.let { points ->
+            orderCorners(points.map { PointF((it.x / scale).toFloat(), (it.y / scale).toFloat()) })
+                .clamped(gray.cols().toFloat(), gray.rows().toFloat())
+        }
+    }
+
+    private fun edges(small: Mat): Mat {
+        val median = median(small)
+        val edges = Mat()
+        Imgproc.Canny(small, edges, max(10.0, 0.66 * median), max(30.0, 1.33 * median))
+        // Close small gaps so the sheet outline becomes one contour.
+        Imgproc.dilate(edges, edges, Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(3.0, 3.0)), org.opencv.core.Point(-1.0, -1.0), 2)
+        return edges
+    }
+
+    private fun otsu(small: Mat): Mat {
+        val mask = Mat()
+        Imgproc.threshold(small, mask, 0.0, 255.0, Imgproc.THRESH_BINARY + Imgproc.THRESH_OTSU)
+        Imgproc.morphologyEx(mask, mask, Imgproc.MORPH_CLOSE, Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(9.0, 9.0)))
+        return mask
+    }
+
+    private fun findQuad(binary: Mat, minArea: Double): List<org.opencv.core.Point>? {
+        val contours = mutableListOf<MatOfPoint>()
+        Imgproc.findContours(binary, contours, Mat(), Imgproc.RETR_LIST, Imgproc.CHAIN_APPROX_SIMPLE)
+        binary.release()
+        val candidates = contours
+            .map { it to Imgproc.contourArea(it) }
+            .filter { it.second >= minArea }
+            .sortedByDescending { it.second }
+            .take(8)
+        for ((contour, _) in candidates) {
+            val curve = MatOfPoint2f(*contour.toArray())
+            val approx = MatOfPoint2f()
+            Imgproc.approxPolyDP(curve, approx, 0.02 * Imgproc.arcLength(curve, true), true)
+            val points = approx.toArray()
+            if (points.size == 4 && Imgproc.isContourConvex(MatOfPoint(*points))) return points.toList()
+        }
+        // No clean quadrilateral: take the rotated bounding box of the biggest shape.
+        val biggest = candidates.firstOrNull()?.first ?: return null
+        val box = Imgproc.minAreaRect(MatOfPoint2f(*biggest.toArray()))
+        val corners = arrayOfNulls<org.opencv.core.Point>(4)
+        box.points(corners)
+        return corners.filterNotNull()
+    }
+
+    private fun median(gray: Mat): Double {
+        val hist = Mat()
+        Imgproc.calcHist(listOf(gray), MatOfInt(0), Mat(), hist, MatOfInt(256), org.opencv.core.MatOfFloat(0f, 256f))
+        val total = gray.total()
+        var cumulative = 0.0
+        for (i in 0 until 256) {
+            cumulative += hist.get(i, 0)[0]
+            if (cumulative >= total / 2.0) return i.toDouble().also { hist.release() }
+        }
+        hist.release()
+        return 127.0
+    }
+
+    /**
+     * Orders 4 points clockwise: [TL, TR, BR, BL]. Top-left has the smallest x + y and
+     * bottom-right the largest; top-right has the smallest y − x and bottom-left the largest.
+     * This holds even for sheets turned up to ~45°, where sorting by y alone mixes corners up.
      */
     fun orderCorners(points: List<PointF>): QuadCorners {
         if (points.size != 4) throw IllegalArgumentException("Expected 4 points, got ${points.size}")
+        val bySum = points.sortedBy { it.x + it.y }
+        val byDiff = points.sortedBy { it.y - it.x }
+        val ordered = QuadCorners(bySum.first(), byDiff.first(), bySum.last(), byDiff.last())
+        if (ordered.toList().distinctBy { it.x to it.y }.size == 4) return ordered
 
-        // Sort by y-coordinate
+        // Degenerate shapes can pick a point twice; fall back to sorting by y.
         val sortedByY = points.sortedBy { it.y }
         val topTwo = sortedByY.take(2).sortedBy { it.x }
         val bottomTwo = sortedByY.takeLast(2).sortedBy { it.x }
@@ -92,5 +126,12 @@ class DocumentDetector {
             bottomRight = bottomTwo[1],
             bottomLeft = bottomTwo[0]
         )
+    }
+
+    private companion object {
+        /** Detection runs on images this big (longest side); plenty for corners, and fast. */
+        const val WORK_SIZE = 640.0
+        /** A sheet must cover at least this share of the frame. */
+        const val MIN_AREA_RATIO = 0.12
     }
 }

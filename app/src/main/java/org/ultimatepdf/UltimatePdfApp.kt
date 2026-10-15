@@ -25,6 +25,9 @@ class UltimatePdfApp : Application() {
             Log.e(TAG, "Failed to initialize PDFBoxResourceLoader", e)
         }
 
+        // Native computer-vision library used by the document scanner.
+        if (!org.opencv.android.OpenCVLoader.initLocal()) Log.e(TAG, "Failed to load OpenCV")
+
         try {
             // Register BouncyCastle provider for cryptographic PDF signing and AES-256 encryption
             Security.removeProvider(BouncyCastleProvider.PROVIDER_NAME)
