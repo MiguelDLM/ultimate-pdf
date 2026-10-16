@@ -1,4 +1,5 @@
 # Ultimate PDF 📄⚡
+[![Descargas totales](https://img.shields.io/github/downloads/MiguelDLM/ultimate-pdf/total?label=Descargas%20totales)](https://github.com/MiguelDLM/ultimate-pdf/releases) [![Android mínimo](https://img.shields.io/badge/Android-8.0%2B%20(API%2026)-3DDC84?logo=android&logoColor=white)](https://github.com/MiguelDLM/ultimate-pdf/blob/main/app/build.gradle.kts) [![Última release](https://img.shields.io/github/v/release/MiguelDLM/ultimate-pdf?display_name=tag&label=%C3%9Altima%20release)](https://github.com/MiguelDLM/ultimate-pdf/releases/latest) [![Lenguaje](https://img.shields.io/badge/Lenguaje-Kotlin-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org)
 
 > **The Ultimate Open-Source Adobe Acrobat Replacement for Android (Smartphones & Tablets)**  
 > Built with modern **Jetpack Compose**, **Material 3**, **PdfBox-Android**, **CameraX**, and **Bouncy Castle**.
