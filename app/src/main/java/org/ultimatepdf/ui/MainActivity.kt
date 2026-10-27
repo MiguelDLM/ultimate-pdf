@@ -39,6 +39,9 @@ import org.ultimatepdf.core.pdf.PdfThumbnails
 import org.ultimatepdf.core.settings.AppSettings
 import org.ultimatepdf.core.settings.RecentDocuments
 import org.ultimatepdf.core.settings.ThemeMode
+import org.ultimatepdf.core.updater.AppUpdateManager
+import org.ultimatepdf.core.updater.ReleaseInfo
+import org.ultimatepdf.core.updater.UpdateCheckResult
 import org.ultimatepdf.ui.components.copyToUri
 import org.ultimatepdf.ui.components.rememberPdfPicker
 import org.ultimatepdf.ui.components.rememberSaveFileLauncher
@@ -50,6 +53,8 @@ import org.ultimatepdf.ui.home.RecentsScreen
 import org.ultimatepdf.ui.navigation.AppDestination
 import org.ultimatepdf.ui.scanner.DocumentScannerScreen
 import org.ultimatepdf.ui.settings.SettingsScreen
+import org.ultimatepdf.ui.settings.UpdateDialog
+import org.ultimatepdf.ui.settings.appVersionName
 import org.ultimatepdf.ui.sign.DigitalSignScreen
 import org.ultimatepdf.ui.theme.UltimatePdfTheme
 import org.ultimatepdf.ui.tools.ComposerMode
@@ -136,6 +141,55 @@ class MainActivity : ComponentActivity() {
         var toolSource by rememberSaveable { mutableStateOf<Uri?>(null) }
         var isLoading by remember { mutableStateOf(false) }
         val session = remember { AnnotationSession() }
+
+        var availableUpdate by remember { mutableStateOf<ReleaseInfo?>(null) }
+        var isCheckingUpdates by remember { mutableStateOf(false) }
+
+        fun performManualUpdateCheck() {
+            if (isCheckingUpdates) return
+            coroutineScope.launch {
+                isCheckingUpdates = true
+                val currentVer = appVersionName(this@MainActivity)
+                val result = AppUpdateManager.checkForUpdate(currentVer)
+                settings.recordUpdateChecked()
+                isCheckingUpdates = false
+                when (result) {
+                    is UpdateCheckResult.Available -> {
+                        availableUpdate = result.release
+                    }
+                    is UpdateCheckResult.UpToDate -> {
+                        Toast.makeText(
+                            this@MainActivity,
+                            getString(R.string.update_up_to_date, currentVer),
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                    is UpdateCheckResult.Error -> {
+                        Toast.makeText(
+                            this@MainActivity,
+                            getString(R.string.update_check_failed, result.message),
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            }
+        }
+
+        // Automatic periodic update check on launch
+        LaunchedEffect(Unit) {
+            if (settings.autoUpdateEnabled) {
+                val now = System.currentTimeMillis()
+                val elapsed = now - settings.lastUpdateCheckTime
+                if (elapsed >= settings.updateFrequency.intervalMillis) {
+                    val currentVer = appVersionName(this@MainActivity)
+                    val result = AppUpdateManager.checkForUpdate(currentVer)
+                    settings.recordUpdateChecked(now)
+                    if (result is UpdateCheckResult.Available) {
+                        availableUpdate = result.release
+                    }
+                }
+            }
+        }
 
         fun showDocument(doc: DocumentModel) {
             document = doc
@@ -298,8 +352,12 @@ class MainActivity : ComponentActivity() {
                 AppDestination.SETTINGS -> SettingsScreen(
                     theme = settings.themeMode,
                     language = settings.language,
+                    autoUpdateEnabled = settings.autoUpdateEnabled,
+                    updateFrequency = settings.updateFrequency,
+                    lastUpdateCheckTime = settings.lastUpdateCheckTime,
                     signatures = signatureLibrary,
                     stamps = stampLibrary,
+                    isCheckingUpdates = isCheckingUpdates,
                     onTheme = settings::updateTheme,
                     onLanguage = { language ->
                         if (language != settings.language) {
@@ -307,6 +365,9 @@ class MainActivity : ComponentActivity() {
                             recreate()
                         }
                     },
+                    onAutoUpdateChange = settings::updateAutoUpdateEnabled,
+                    onUpdateFrequencyChange = settings::updateFrequency,
+                    onCheckForUpdates = ::performManualUpdateCheck,
                     onBack = onBack
                 )
                 null -> if (currentDocument == null) {
@@ -316,6 +377,7 @@ class MainActivity : ComponentActivity() {
                         thumbnails = thumbnails,
                         onOpenPdf = pickPdf,
                         onOpenRecent = { openDocument(it.uri) },
+                        onRemoveRecent = { recents.remove(it.uri) },
                         onTool = { openToolFor(it, null) }
                     )
                 } else {
@@ -323,6 +385,7 @@ class MainActivity : ComponentActivity() {
                         document = currentDocument,
                         pdfEngine = pdfEngine,
                         textExtractor = textExtractor,
+                        thumbnails = thumbnails,
                         annotationStore = annotationStore,
                         signatureLibrary = signatureLibrary,
                         stampLibrary = stampLibrary,
@@ -336,6 +399,14 @@ class MainActivity : ComponentActivity() {
                         isTablet = isTablet
                     )
                 }
+            }
+
+            availableUpdate?.let { release ->
+                UpdateDialog(
+                    release = release,
+                    currentVersion = appVersionName(this@MainActivity),
+                    onDismiss = { availableUpdate = null }
+                )
             }
         }
     }

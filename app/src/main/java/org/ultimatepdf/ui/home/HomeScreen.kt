@@ -1,7 +1,10 @@
 package org.ultimatepdf.ui.home
 
 import android.text.format.DateUtils
+import android.widget.Toast
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -9,14 +12,18 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -26,7 +33,9 @@ import org.ultimatepdf.core.pdf.PageRef
 import org.ultimatepdf.core.pdf.PdfThumbnails
 import org.ultimatepdf.core.settings.RecentDocument
 import org.ultimatepdf.ui.components.PageThumbnail
+import org.ultimatepdf.ui.components.deleteFileFromDevice
 import org.ultimatepdf.ui.components.formatBytes
+import org.ultimatepdf.ui.components.sharePdf
 import org.ultimatepdf.ui.navigation.AppDestination
 
 private const val RECENTS_ON_HOME = 3
@@ -39,6 +48,7 @@ fun HomeScreen(
     thumbnails: PdfThumbnails,
     onOpenPdf: () -> Unit,
     onOpenRecent: (RecentDocument) -> Unit,
+    onRemoveRecent: ((RecentDocument) -> Unit)? = null,
     onTool: (AppDestination) -> Unit
 ) {
     Scaffold { padding ->
@@ -84,7 +94,12 @@ fun HomeScreen(
                     Column {
                         recents.take(RECENTS_ON_HOME).forEachIndexed { i, doc ->
                             if (i > 0) HorizontalDivider(Modifier.padding(start = 72.dp), color = MaterialTheme.colorScheme.outlineVariant)
-                            RecentRow(doc, thumbnails, onClick = { onOpenRecent(doc) })
+                            RecentRow(
+                                doc = doc,
+                                thumbnails = thumbnails,
+                                onClick = { onOpenRecent(doc) },
+                                onRemove = onRemoveRecent?.let { { it(doc) } }
+                            )
                         }
                     }
                 }
@@ -144,7 +159,8 @@ private fun SectionHeader(title: String, action: String? = null, onAction: () ->
     }
 }
 
-/** One recent document: first-page preview, name and details. */
+/** One recent document: first-page preview, name and details. Supports tap to open, long-press or 3-dots for options. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun RecentRow(
     doc: RecentDocument,
@@ -152,11 +168,18 @@ fun RecentRow(
     onClick: () -> Unit,
     onRemove: (() -> Unit)? = null
 ) {
+    val context = LocalContext.current
+    var showMenu by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = { showMenu = true }
+            )
             .padding(horizontal = 16.dp, vertical = 12.dp)
     ) {
         Box(Modifier.width(40.dp)) {
@@ -182,20 +205,82 @@ fun RecentRow(
                 overflow = TextOverflow.Ellipsis
             )
         }
-        if (onRemove != null) {
-            var menu by remember { mutableStateOf(false) }
-            Box {
-                IconButton(onClick = { menu = true }) {
-                    Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.more_options))
-                }
-                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+        Box {
+            IconButton(onClick = { showMenu = true }) {
+                Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.more_options))
+            }
+            DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.share)) },
+                    leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
+                    onClick = {
+                        showMenu = false
+                        sharePdf(context, doc.uri, doc.name)
+                    }
+                )
+                if (onRemove != null) {
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.recent_remove)) },
-                        onClick = { menu = false; onRemove() }
+                        leadingIcon = { Icon(Icons.Default.Close, contentDescription = null) },
+                        onClick = {
+                            showMenu = false
+                            onRemove()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                stringResource(R.string.delete_from_device),
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Default.DeleteForever,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        },
+                        onClick = {
+                            showMenu = false
+                            showDeleteConfirm = true
+                        }
                     )
                 }
             }
         }
+    }
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text(stringResource(R.string.delete_device_title)) },
+            text = { Text(stringResource(R.string.delete_device_message)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteConfirm = false
+                        val ok = deleteFileFromDevice(context, doc.uri)
+                        onRemove?.invoke()
+                        if (ok) {
+                            Toast.makeText(context, R.string.delete_device_success, Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(context, R.string.delete_device_failed, Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                ) {
+                    Text(
+                        stringResource(R.string.delete),
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
     }
 }
 

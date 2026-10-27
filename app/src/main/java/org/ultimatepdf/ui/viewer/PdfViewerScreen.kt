@@ -97,7 +97,21 @@ import org.ultimatepdf.ui.components.copyToUri
 import org.ultimatepdf.ui.navigation.AppDestination
 import org.ultimatepdf.ui.sign.SignatureColorPicker
 import org.ultimatepdf.ui.sign.SignaturePickerSheet
+import org.ultimatepdf.core.pdf.PdfThumbnails
+import org.ultimatepdf.core.pdf.PageRef
+import org.ultimatepdf.ui.components.PageThumbnail
+import org.ultimatepdf.ui.components.sharePdf
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import java.io.File
+
+data class SearchResult(
+    val pageIndex: Int,
+    val glyphRange: IntRange,
+    val rects: List<org.ultimatepdf.core.model.PdfRect>
+)
 
 /**
  * Continuous PDF reader with an integrated markup mode.
@@ -114,6 +128,7 @@ fun PdfViewerScreen(
     document: DocumentModel,
     pdfEngine: PdfEngine,
     textExtractor: PdfTextExtractor,
+    thumbnails: PdfThumbnails,
     annotationStore: PdfAnnotationStore,
     signatureLibrary: SignatureLibrary,
     stampLibrary: StampLibrary,
@@ -138,6 +153,12 @@ fun PdfViewerScreen(
     var showMoreSheet by remember { mutableStateOf(false) }
     var showSignatureSheet by remember { mutableStateOf(false) }
     var pendingSaveAsFile by remember { mutableStateOf<File?>(null) }
+    var isSearching by rememberSaveable { mutableStateOf(false) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var searchMatches by remember { mutableStateOf<List<SearchResult>>(emptyList()) }
+    var currentMatchIndex by remember { mutableIntStateOf(0) }
+    var isSearchLoading by remember { mutableStateOf(false) }
+    var showThumbnailDrawer by rememberSaveable { mutableStateOf(false) }
 
     var scale by remember { mutableFloatStateOf(1f) }
     var offsetX by remember { mutableFloatStateOf(0f) }
@@ -170,6 +191,56 @@ fun PdfViewerScreen(
         scale = 1f
         offsetX = 0f
         offsetY = 0f
+        isSearching = false
+        searchQuery = ""
+        searchMatches = emptyList()
+    }
+
+    LaunchedEffect(searchQuery, isSearching) {
+        if (!isSearching || searchQuery.isBlank()) {
+            searchMatches = emptyList()
+            currentMatchIndex = 0
+            isSearchLoading = false
+            return@LaunchedEffect
+        }
+        delay(250)
+        isSearchLoading = true
+        val query = searchQuery.trim()
+        val results = withContext(Dispatchers.IO) {
+            val list = mutableListOf<SearchResult>()
+            for (page in 0 until document.pageCount) {
+                val pageText = textExtractor.pageText(document.uri, page)
+                if (pageText.isEmpty) continue
+                val sb = StringBuilder()
+                val charToGlyph = ArrayList<Int>()
+                pageText.glyphs.forEachIndexed { idx, glyph ->
+                    for (ch in glyph.text) {
+                        charToGlyph.add(idx)
+                        sb.append(ch)
+                    }
+                }
+                val fullText = sb.toString()
+                var start = 0
+                while (start < fullText.length) {
+                    val found = fullText.indexOf(query, start, ignoreCase = true)
+                    if (found == -1) break
+                    val startGlyph = charToGlyph.getOrElse(found) { 0 }
+                    val endGlyph = charToGlyph.getOrElse(found + query.length - 1) { pageText.glyphs.lastIndex }
+                    val range = startGlyph..endGlyph
+                    val rects = pageText.lineRects(range)
+                    list.add(SearchResult(page, range, rects))
+                    start = found + maxOf(1, query.length)
+                }
+            }
+            list
+        }
+        searchMatches = results
+        isSearchLoading = false
+        if (results.isNotEmpty()) {
+            val firstOnCurrent = results.indexOfFirst { it.pageIndex >= listState.firstVisibleItemIndex }
+            currentMatchIndex = if (firstOnCurrent != -1) firstOnCurrent else 0
+            listState.animateScrollToItem(results[currentMatchIndex].pageIndex)
+        }
     }
 
     // PdfRenderer doesn't draw annotations, so the markup layer draws the file's own ones too.
@@ -296,6 +367,11 @@ fun PdfViewerScreen(
 
     BackHandler {
         when {
+            showThumbnailDrawer -> showThumbnailDrawer = false
+            isSearching -> {
+                isSearching = false
+                searchQuery = ""
+            }
             session.selection != null -> session.selection = null
             session.selectedAnnotationId != null -> session.selectedAnnotationId = null
             isEditMode -> {
@@ -308,101 +384,203 @@ fun PdfViewerScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                navigationIcon = {
-                    IconButton(onClick = {
-                        if (isEditMode) {
-                            session.tool = MarkupTool.NONE
-                            onEditModeChange(false)
-                        } else {
-                            leaveDocument(onClose)
+            if (isSearching) {
+                TopAppBar(
+                    navigationIcon = {
+                        IconButton(onClick = {
+                            isSearching = false
+                            searchQuery = ""
+                        }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                         }
-                    }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
-                    }
-                },
-                title = {
-                    Column {
-                        Text(
-                            text = document.name,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = if (isEditMode) stringResource(R.string.viewer_editing) else stringResource(R.string.viewer_page_of, currentPage + 1, document.pageCount),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (isEditMode) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                },
-                actions = {
-                    if (isEditMode) {
-                        session.selectedAnnotation?.let { selected ->
-                            IconButton(onClick = {
-                                val dup = selected.copy(
-                                    id = java.util.UUID.randomUUID().toString(),
-                                    bounds = selected.bounds.offset(0.02f, 0.02f)
+                    },
+                    title = {
+                        TextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            placeholder = {
+                                Text(
+                                    stringResource(R.string.search_hint),
+                                    style = MaterialTheme.typography.bodyMedium
                                 )
-                                session.add(dup)
-                                session.selectedAnnotationId = dup.id
-                            }) {
-                                Icon(Icons.Default.ContentCopy, contentDescription = stringResource(R.string.duplicate))
+                            },
+                            singleLine = true,
+                            colors = TextFieldDefaults.colors(
+                                focusedContainerColor = Color.Transparent,
+                                unfocusedContainerColor = Color.Transparent,
+                                focusedIndicatorColor = Color.Transparent,
+                                unfocusedIndicatorColor = Color.Transparent
+                            ),
+                            trailingIcon = if (searchQuery.isNotEmpty()) {
+                                {
+                                    IconButton(onClick = { searchQuery = "" }) {
+                                        Icon(Icons.Default.Clear, contentDescription = null)
+                                    }
+                                }
+                            } else null,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    },
+                    actions = {
+                        if (isSearchLoading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier
+                                    .size(20.dp)
+                                    .padding(end = 8.dp),
+                                strokeWidth = 2.dp
+                            )
+                        } else if (searchQuery.isNotBlank()) {
+                            if (searchMatches.isNotEmpty()) {
+                                Text(
+                                    text = stringResource(
+                                        R.string.search_match_count,
+                                        currentMatchIndex + 1,
+                                        searchMatches.size
+                                    ),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(end = 4.dp)
+                                )
+                            } else {
+                                Text(
+                                    text = stringResource(R.string.search_no_results),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.padding(end = 4.dp)
+                                )
                             }
-                            IconButton(onClick = {
-                                session.remove(selected)
-                            }) {
-                                Icon(Icons.Default.DeleteOutline, contentDescription = stringResource(R.string.delete), tint = MaterialTheme.colorScheme.error)
-                            }
                         }
-                        IconButton(onClick = session::undo, enabled = session.canUndo) {
-                            Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = stringResource(R.string.undo))
-                        }
-                        IconButton(onClick = session::redo, enabled = session.canRedo) {
-                            Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = stringResource(R.string.redo))
-                        }
-                        FilledIconButton(
+                        IconButton(
                             onClick = {
-                                coroutineScope.launch {
-                                    if (saveAnnotations()) {
-                                        session.tool = MarkupTool.NONE
-                                        onEditModeChange(false)
+                                if (searchMatches.isNotEmpty()) {
+                                    currentMatchIndex = (currentMatchIndex - 1 + searchMatches.size) % searchMatches.size
+                                    coroutineScope.launch {
+                                        listState.animateScrollToItem(searchMatches[currentMatchIndex].pageIndex)
                                     }
                                 }
                             },
-                            enabled = !isSaving,
-                            modifier = Modifier.padding(end = 8.dp)
+                            enabled = searchMatches.isNotEmpty()
                         ) {
-                            Icon(Icons.Default.Check, contentDescription = stringResource(R.string.done))
+                            Icon(Icons.Default.KeyboardArrowUp, contentDescription = stringResource(R.string.search_previous))
                         }
-                    } else {
-                        if (session.hasUnsavedChanges) {
-                            IconButton(
-                                onClick = { coroutineScope.launch { saveAnnotations() } },
-                                enabled = !isSaving
-                            ) {
-                                Icon(Icons.Default.Save, contentDescription = stringResource(R.string.viewer_save_annotations), tint = MaterialTheme.colorScheme.primary)
+                        IconButton(
+                            onClick = {
+                                if (searchMatches.isNotEmpty()) {
+                                    currentMatchIndex = (currentMatchIndex + 1) % searchMatches.size
+                                    coroutineScope.launch {
+                                        listState.animateScrollToItem(searchMatches[currentMatchIndex].pageIndex)
+                                    }
+                                }
+                            },
+                            enabled = searchMatches.isNotEmpty()
+                        ) {
+                            Icon(Icons.Default.KeyboardArrowDown, contentDescription = stringResource(R.string.search_next))
+                        }
+                    }
+                )
+            } else {
+                TopAppBar(
+                    navigationIcon = {
+                        IconButton(onClick = {
+                            if (isEditMode) {
+                                session.tool = MarkupTool.NONE
+                                onEditModeChange(false)
+                            } else {
+                                leaveDocument(onClose)
                             }
+                        }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                         }
-                        IconButton(onClick = { invertColors = !invertColors }) {
-                            Icon(
-                                imageVector = if (invertColors) Icons.Default.LightMode else Icons.Default.DarkMode,
-                                contentDescription = stringResource(R.string.viewer_night_mode)
+                    },
+                    title = {
+                        Column {
+                            Text(
+                                text = document.name,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = if (isEditMode) stringResource(R.string.viewer_editing) else stringResource(R.string.viewer_page_of, currentPage + 1, document.pageCount),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (isEditMode) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        FilledTonalIconButton(onClick = { onEditModeChange(true) }) {
-                            Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.edit))
+                    },
+                    actions = {
+                        if (isEditMode) {
+                            session.selectedAnnotation?.let { selected ->
+                                IconButton(onClick = {
+                                    val dup = selected.copy(
+                                        id = java.util.UUID.randomUUID().toString(),
+                                        bounds = selected.bounds.offset(0.02f, 0.02f)
+                                    )
+                                    session.add(dup)
+                                    session.selectedAnnotationId = dup.id
+                                }) {
+                                    Icon(Icons.Default.ContentCopy, contentDescription = stringResource(R.string.duplicate))
+                                }
+                                IconButton(onClick = {
+                                    session.remove(selected)
+                                }) {
+                                    Icon(Icons.Default.DeleteOutline, contentDescription = stringResource(R.string.delete), tint = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                            IconButton(onClick = session::undo, enabled = session.canUndo) {
+                                Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = stringResource(R.string.undo))
+                            }
+                            IconButton(onClick = session::redo, enabled = session.canRedo) {
+                                Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = stringResource(R.string.redo))
+                            }
+                            FilledIconButton(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        if (saveAnnotations()) {
+                                            session.tool = MarkupTool.NONE
+                                            onEditModeChange(false)
+                                        }
+                                    }
+                                },
+                                enabled = !isSaving,
+                                modifier = Modifier.padding(end = 8.dp)
+                            ) {
+                                Icon(Icons.Default.Check, contentDescription = stringResource(R.string.done))
+                            }
+                        } else {
+                            if (session.hasUnsavedChanges) {
+                                IconButton(
+                                    onClick = { coroutineScope.launch { saveAnnotations() } },
+                                    enabled = !isSaving
+                                ) {
+                                    Icon(Icons.Default.Save, contentDescription = stringResource(R.string.viewer_save_annotations), tint = MaterialTheme.colorScheme.primary)
+                                }
+                            }
+                            IconButton(onClick = { isSearching = true }) {
+                                Icon(Icons.Default.Search, contentDescription = stringResource(R.string.search))
+                            }
+                            IconButton(onClick = { invertColors = !invertColors }) {
+                                Icon(
+                                    imageVector = if (invertColors) Icons.Default.LightMode else Icons.Default.DarkMode,
+                                    contentDescription = stringResource(R.string.viewer_night_mode)
+                                )
+                            }
+                            FilledTonalIconButton(onClick = { onEditModeChange(true) }) {
+                                Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.edit))
+                            }
+                            ReaderOverflowMenu(
+                                onOpenAnother = { leaveDocument(onOpenAnother) },
+                                onGoToPage = { showGoToPage = true },
+                                onTools = { showMoreSheet = true },
+                                onShare = { sharePdf(context, document.uri, document.name) },
+                                onShowThumbnails = { showThumbnailDrawer = true }
+                            )
                         }
-                        ReaderOverflowMenu(
-                            onOpenAnother = { leaveDocument(onOpenAnother) },
-                            onGoToPage = { showGoToPage = true },
-                            onTools = { showMoreSheet = true }
-                        )
                     }
-                }
-            )
+                )
+            }
         },
         bottomBar = {
             AnimatedVisibility(
@@ -432,14 +610,15 @@ fun PdfViewerScreen(
                 .background(if (invertColors) Color(0xFF121212) else MaterialTheme.colorScheme.surfaceContainerHighest)
                 .clipToBounds()
                 .pointerInput(isInteractingWithContent) {
-                    // Pinch-zoom and two-finger pan run in the Initial pass so they win over list
-                    // scrolling and page tools; one finger pans sideways only while zoomed and not interacting with content.
+                    // Pinch-zoom and pan run in the Initial pass so they win over list
+                    // scrolling and page tools while zoomed; vertical movement beyond the zoom margin scrolls the document.
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                         do {
                             val event = awaitPointerEvent(PointerEventPass.Initial)
                             val pressed = event.changes.count { it.pressed }
-                            val maxX = size.width * (scale - 1f) / 2f
+                            val limitX = size.width * (scale - 1f) / 2f
+                            val limitY = size.height * (scale - 1f) / 2f
                             if (pressed >= 2) {
                                 val newScale = (scale * event.calculateZoom()).coerceIn(1f, 5f)
                                 val z = newScale / scale
@@ -447,17 +626,25 @@ fun PdfViewerScreen(
                                 val pan = event.calculatePan()
                                 val x = c.x * (1 - z) + offsetX * z + pan.x
                                 val y = c.y * (1 - z) + offsetY * z + pan.y
-                                val limitX = size.width * (newScale - 1f) / 2f
-                                val limitY = size.height * (newScale - 1f) / 2f
+                                val newLimitX = size.width * (newScale - 1f) / 2f
+                                val newLimitY = size.height * (newScale - 1f) / 2f
                                 scale = newScale
-                                offsetX = x.coerceIn(-limitX, limitX)
-                                offsetY = y.coerceIn(-limitY, limitY)
+                                offsetX = x.coerceIn(-newLimitX, newLimitX)
+                                offsetY = y.coerceIn(-newLimitY, newLimitY)
                                 // Vertical movement beyond the zoom margin scrolls the document.
                                 val overflowY = y - offsetY
                                 if (overflowY != 0f) listState.dispatchRawDelta(-overflowY / newScale)
                                 event.changes.forEach { it.consume() }
                             } else if (pressed == 1 && scale > 1f && !isInteractingWithContent && !event.changes.any { it.isConsumed }) {
-                                offsetX = (offsetX + event.calculatePan().x).coerceIn(-maxX, maxX)
+                                val pan = event.calculatePan()
+                                if (pan != Offset.Zero) {
+                                    offsetX = (offsetX + pan.x).coerceIn(-limitX, limitX)
+                                    val y = offsetY + pan.y
+                                    offsetY = y.coerceIn(-limitY, limitY)
+                                    val overflowY = y - offsetY
+                                    if (overflowY != 0f) listState.dispatchRawDelta(-overflowY / scale)
+                                    event.changes.forEach { it.consume() }
+                                }
                             }
                         } while (event.changes.any { it.pressed })
                     }
@@ -472,9 +659,11 @@ fun PdfViewerScreen(
                         } else {
                             val target = 2.2f
                             val c = tap - Offset(size.width / 2f, size.height / 2f)
+                            val limitX = size.width * (target - 1f) / 2f
+                            val limitY = size.height * (target - 1f) / 2f
                             scale = target
-                            offsetX = (-c.x * (target - 1f)).coerceIn(-size.width * 0.6f, size.width * 0.6f)
-                            offsetY = (-c.y * (target - 1f)).coerceIn(-size.height * 0.6f, size.height * 0.6f)
+                            offsetX = (-c.x * (target - 1f)).coerceIn(-limitX, limitX)
+                            offsetY = (-c.y * (target - 1f)).coerceIn(-limitY, limitY)
                         }
                     })
                 }
@@ -503,7 +692,9 @@ fun PdfViewerScreen(
                         targetWidth = renderTargetWidth,
                         invertColors = invertColors,
                         session = session,
-                        isTablet = isTablet
+                        isTablet = isTablet,
+                        searchMatches = if (isSearching) searchMatches else emptyList(),
+                        currentMatch = if (isSearching) searchMatches.getOrNull(currentMatchIndex) else null
                     )
                 }
             }
@@ -643,6 +834,170 @@ fun PdfViewerScreen(
                     CircularProgressIndicator()
                 }
             }
+
+            // Semi-transparent tab button on the left edge
+            AnimatedVisibility(
+                visible = !isEditMode && !showThumbnailDrawer,
+                enter = fadeIn() + slideInHorizontally { -it },
+                exit = fadeOut() + slideOutHorizontally { -it },
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = 0.dp)
+            ) {
+                Surface(
+                    onClick = { showThumbnailDrawer = true },
+                    shape = RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.78f),
+                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    shadowElevation = 6.dp,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+                    modifier = Modifier
+                        .width(36.dp)
+                        .height(72.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                        Icon(
+                            Icons.Default.ChevronRight,
+                            contentDescription = stringResource(R.string.show_thumbnails),
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
+            }
+
+            // Scrim overlay behind the thumbnail drawer
+            AnimatedVisibility(
+                visible = showThumbnailDrawer,
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.35f))
+                        .clickable { showThumbnailDrawer = false }
+                )
+            }
+
+            // Thumbnail drawer panel
+            AnimatedVisibility(
+                visible = showThumbnailDrawer,
+                enter = slideInHorizontally { -it } + fadeIn(),
+                exit = slideOutHorizontally { -it } + fadeOut(),
+                modifier = Modifier.align(Alignment.CenterStart)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(topEnd = 20.dp, bottomEnd = 20.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    shadowElevation = 12.dp,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier
+                        .width(if (isTablet) 230.dp else 175.dp)
+                        .fillMaxHeight()
+                ) {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        // Header
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.PhotoLibrary,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                stringResource(R.string.thumbnails_title),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                modifier = Modifier.padding(end = 4.dp)
+                            ) {
+                                Text(
+                                    "${document.pageCount}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                            IconButton(
+                                onClick = { showThumbnailDrawer = false },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.ChevronLeft,
+                                    contentDescription = stringResource(R.string.hide_thumbnails),
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                        }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                        val thumbnailListState = rememberLazyListState()
+                        LaunchedEffect(showThumbnailDrawer) {
+                            if (showThumbnailDrawer) {
+                                thumbnailListState.scrollToItem(currentPage)
+                            }
+                        }
+
+                        LazyColumn(
+                            state = thumbnailListState,
+                            contentPadding = PaddingValues(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            items(count = document.pageCount, key = { it }) { pageIndex ->
+                                val isCurrent = currentPage == pageIndex
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            coroutineScope.launch {
+                                                listState.scrollToItem(pageIndex)
+                                            }
+                                            showThumbnailDrawer = false
+                                        }
+                                        .padding(2.dp)
+                                ) {
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        border = BorderStroke(
+                                            width = if (isCurrent) 2.5.dp else 1.dp,
+                                            color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+                                        ),
+                                        shadowElevation = if (isCurrent) 4.dp else 1.dp,
+                                        color = MaterialTheme.colorScheme.surface
+                                    ) {
+                                        PageThumbnail(
+                                            page = PageRef(document.uri, pageIndex),
+                                            thumbnails = thumbnails,
+                                            widthHint = if (isTablet) 190.dp else 145.dp
+                                        )
+                                    }
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(
+                                        text = "${pageIndex + 1}",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -761,7 +1116,9 @@ private fun ReaderPage(
     targetWidth: Int,
     invertColors: Boolean,
     session: AnnotationSession,
-    isTablet: Boolean
+    isTablet: Boolean,
+    searchMatches: List<SearchResult> = emptyList(),
+    currentMatch: SearchResult? = null
 ) {
     var pageBitmap by remember(document.revision) { mutableStateOf<Bitmap?>(null) }
     var aspectRatio by remember { mutableFloatStateOf(0.707f) } // A4 until the real size is known
@@ -807,6 +1164,46 @@ private fun ReaderPage(
         } else {
             CircularProgressIndicator(modifier = Modifier.size(32.dp), strokeWidth = 3.dp)
         }
+
+        val matchesOnPage = remember(searchMatches, pageIndex) {
+            searchMatches.filter { it.pageIndex == pageIndex }
+        }
+        if (matchesOnPage.isNotEmpty()) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val w = size.width
+                val h = size.height
+                val matchFill = Color(0xFFFFEB3B).copy(alpha = 0.45f)
+                val matchBorder = Color(0xFFFBC02D).copy(alpha = 0.8f)
+                val currentFill = Color(0xFFFF9800).copy(alpha = 0.65f)
+                val currentBorder = Color(0xFFE65100)
+
+                for (match in matchesOnPage) {
+                    val isCurrent = currentMatch == match
+                    val fill = if (isCurrent) currentFill else matchFill
+                    val border = if (isCurrent) currentBorder else matchBorder
+                    val strokeW = if (isCurrent) 2.5.dp.toPx() else 1.dp.toPx()
+
+                    for (r in match.rects) {
+                        val left = r.left * w
+                        val top = r.top * h
+                        val width = r.width * w
+                        val height = r.height * h
+                        drawRect(
+                            color = fill,
+                            topLeft = Offset(left, top),
+                            size = Size(width, height)
+                        )
+                        drawRect(
+                            color = border,
+                            topLeft = Offset(left, top),
+                            size = Size(width, height),
+                            style = Stroke(width = strokeW)
+                        )
+                    }
+                }
+            }
+        }
+
         PageMarkupLayer(
             pageIndex = pageIndex,
             pageAspect = aspectRatio,
@@ -821,7 +1218,9 @@ private fun ReaderPage(
 private fun ReaderOverflowMenu(
     onOpenAnother: () -> Unit,
     onGoToPage: () -> Unit,
-    onTools: () -> Unit
+    onTools: () -> Unit,
+    onShare: () -> Unit,
+    onShowThumbnails: () -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box {
@@ -829,6 +1228,16 @@ private fun ReaderOverflowMenu(
             Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.more_options))
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.show_thumbnails)) },
+                leadingIcon = { Icon(Icons.Default.PhotoLibrary, contentDescription = null) },
+                onClick = { expanded = false; onShowThumbnails() }
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.share)) },
+                leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
+                onClick = { expanded = false; onShare() }
+            )
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.viewer_go_to_page)) },
                 leadingIcon = { Icon(Icons.Default.Numbers, contentDescription = null) },

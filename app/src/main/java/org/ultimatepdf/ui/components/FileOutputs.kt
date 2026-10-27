@@ -3,8 +3,11 @@ package org.ultimatepdf.ui.components
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.provider.DocumentsContract
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.FileProvider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -17,6 +20,7 @@ import androidx.documentfile.provider.DocumentFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.ultimatepdf.R
 import java.io.File
 
 /** Copies a finished temp file to a location the user picks ("Save as"). */
@@ -147,4 +151,60 @@ fun formatBytes(bytes: Long): String = when {
     bytes >= 1024L * 1024 -> "%.1f MB".format(bytes / (1024.0 * 1024))
     bytes >= 1024 -> "%d KB".format(bytes / 1024)
     else -> "$bytes B"
+}
+
+fun sharePdf(context: Context, uri: Uri, name: String? = null) {
+    try {
+        val fileName = name ?: displayName(context, uri)
+        val shareUri = if (uri.scheme == "file") {
+            val file = File(uri.path ?: "")
+            FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        } else if (uri.scheme == "content") {
+            val cleanName = fileName.replace(Regex("[^a-zA-Z0-9._-]"), "_").ifBlank { "document.pdf" }
+            val cacheFile = File(context.cacheDir, "shared_$cleanName")
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                cacheFile.outputStream().use { output -> input.copyTo(output) }
+            }
+            FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", cacheFile)
+        } else {
+            uri
+        }
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "application/pdf"
+            putExtra(Intent.EXTRA_STREAM, shareUri)
+            putExtra(Intent.EXTRA_SUBJECT, fileName)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        val chooser = Intent.createChooser(intent, context.getString(R.string.share)).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(chooser)
+    } catch (e: Exception) {
+        Toast.makeText(context, context.getString(R.string.share_error, e.message ?: ""), Toast.LENGTH_SHORT).show()
+    }
+}
+
+fun deleteFileFromDevice(context: Context, uri: Uri): Boolean {
+    return try {
+        if (uri.scheme == "file") {
+            File(uri.path ?: "").delete()
+        } else if (uri.scheme == "content") {
+            val docDeleted = runCatching {
+                DocumentsContract.deleteDocument(context.contentResolver, uri)
+            }.getOrDefault(false)
+            if (docDeleted) true
+            else {
+                val docFile = DocumentFile.fromSingleUri(context, uri)
+                if (docFile != null && docFile.exists() && docFile.delete()) {
+                    true
+                } else {
+                    context.contentResolver.delete(uri, null, null) > 0
+                }
+            }
+        } else {
+            false
+        }
+    } catch (_: Exception) {
+        false
+    }
 }
