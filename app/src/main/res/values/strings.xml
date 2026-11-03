@@ -371,6 +371,12 @@
     <string name="stamp_take_photo">Take a photo of a physical stamp</string>
     <string name="stamp_pick_gallery">Choose an image from the gallery</string>
     <string name="color">Color</string>
+    <string name="tool_reprocess">Re-process scan</string>
+    <string name="tool_reprocess_short">Re-process</string>
+    <string name="tool_reprocess_desc">Apply the scanner\'s filters, crop and straightening to an existing PDF</string>
+    <string name="reprocess_preparing">Preparing page %1$d of %2$d…</string>
+    <string name="reprocess_failed">Couldn\'t read the pages of this PDF</string>
+    <string name="reprocess_file_name">%1$s (re-processed).pdf</string>
     <string name="tool_edit_content">Edit text and images</string>
     <string name="tool_edit_content_short">Edit content</string>
     <string name="tool_edit_content_desc">Change text, move or resize images</string>

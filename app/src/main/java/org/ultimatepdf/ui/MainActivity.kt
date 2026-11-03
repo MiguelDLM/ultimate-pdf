@@ -53,6 +53,7 @@ import org.ultimatepdf.ui.home.HomeScreen
 import org.ultimatepdf.ui.home.RecentsScreen
 import org.ultimatepdf.ui.navigation.AppDestination
 import org.ultimatepdf.ui.scanner.DocumentScannerScreen
+import org.ultimatepdf.ui.scanner.ReprocessScreen
 import org.ultimatepdf.ui.settings.SettingsScreen
 import org.ultimatepdf.ui.settings.UpdateDialog
 import org.ultimatepdf.ui.settings.appVersionName
@@ -354,6 +355,11 @@ class MainActivity : ComponentActivity() {
                     thumbnails = thumbnails,
                     securityManager = securityManager,
                     pageOps = pageOps,
+                    onBack = onBack
+                )
+                AppDestination.REPROCESS -> ReprocessScreen(
+                    source = toolSource,
+                    onPdfCreated = ::openDocument,
                     onBack = onBack
                 )
                 AppDestination.RECENTS -> RecentsScreen(

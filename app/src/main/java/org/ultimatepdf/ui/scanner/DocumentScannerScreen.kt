@@ -44,8 +44,10 @@ fun DocumentScannerScreen(
     onBack: () -> Unit,
     /** Images shared from other apps; loaded straight into the review so they can become a PDF. */
     initialImages: List<Uri> = emptyList(),
-    /** Keep the whole frame of the initial images instead of detecting edges; the user adjusts the crop. */
+    /** Initial images are already-cropped pages (re-processing a PDF): keep the whole frame instead of detecting edges. */
     fullFrameImages: Boolean = false,
+    /** File name offered when saving; defaults to "Scan <date>.pdf". */
+    suggestedName: String? = null,
     @Suppress("UNUSED_PARAMETER") isTablet: Boolean = false
 ) {
     val context = LocalContext.current
@@ -116,7 +118,7 @@ fun DocumentScannerScreen(
                 SearchablePdfGenerator().createSearchablePdf(finished, file)
                 finished.forEach { it.image.recycle() }
                 val name = SimpleDateFormat("yyyy-MM-dd HH.mm", Locale.getDefault()).format(Date())
-                saveLauncher.save(context.getString(R.string.scan_file_name, name), file)
+                saveLauncher.save(suggestedName ?: context.getString(R.string.scan_file_name, name), file)
             } catch (e: Exception) {
                 progress = null
                 Toast.makeText(context, R.string.scan_failed, Toast.LENGTH_LONG).show()
@@ -138,7 +140,7 @@ fun DocumentScannerScreen(
             pipeline = pipeline,
             onAddMore = { reviewing = false },
             onSave = ::save,
-            // Started from shared images: back from the review leaves instead of opening the camera.
+            // Started from shared images or a PDF: back from the review leaves instead of opening the camera.
             onBack = { if (initialImages.isNotEmpty()) leave() else reviewing = false }
         )
         hasCamera -> ScanCamera(

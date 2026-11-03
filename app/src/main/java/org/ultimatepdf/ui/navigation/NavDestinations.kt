@@ -3,6 +3,7 @@ package org.ultimatepdf.ui.navigation
 import androidx.annotation.StringRes
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.CallMerge
+import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.CallSplit
 import androidx.compose.material.icons.filled.Compress
@@ -33,6 +34,7 @@ enum class AppDestination(
     val icon: ImageVector
 ) {
     EDIT_CONTENT(R.string.tool_edit_content, R.string.tool_edit_content_short, R.string.tool_edit_content_desc, Icons.Default.EditNote),
+    REPROCESS(R.string.tool_reprocess, R.string.tool_reprocess_short, R.string.tool_reprocess_desc, Icons.Default.AutoFixHigh),
     EXPORT(R.string.tool_export, R.string.tool_export_short, R.string.tool_export_desc, Icons.Default.IosShare),
     ORGANIZE(R.string.tool_organize, R.string.tool_organize_short, R.string.tool_organize_desc, Icons.Default.GridView),
     FORMS(R.string.tool_forms, R.string.tool_forms_short, R.string.tool_forms_desc, Icons.Default.DynamicForm),
@@ -55,7 +57,7 @@ enum class AppDestination(
         val homeTools = listOf(SCANNER, EXPORT, MERGE, SPLIT, EXTRACT_PAGES, COMPRESS, RESIZE, PROTECT, UNLOCK, EXTRACT_TEXT, EXTRACT_IMAGES)
 
         /** Editing tools for the open document (reader's "More" sheet). */
-        val documentTools = listOf(EDIT_CONTENT, ORGANIZE, FORMS, CERTIFICATE)
+        val documentTools = listOf(EDIT_CONTENT, REPROCESS, ORGANIZE, FORMS, CERTIFICATE)
 
         /** File tools that start from the open document. */
         val fileTools = listOf(EXPORT, COMPRESS, RESIZE, SPLIT, EXTRACT_PAGES, MERGE, PROTECT, EXTRACT_TEXT, EXTRACT_IMAGES)

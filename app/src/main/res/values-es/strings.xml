@@ -369,6 +369,12 @@
     <string name="stamp_take_photo">Tomar una foto de un sello físico</string>
     <string name="stamp_pick_gallery">Elegir una imagen de la galería</string>
     <string name="color">Color</string>
+    <string name="tool_reprocess">Reprocesar escaneo</string>
+    <string name="tool_reprocess_short">Reprocesar</string>
+    <string name="tool_reprocess_desc">Aplica los filtros, el recorte y el enderezado del escáner a un PDF existente</string>
+    <string name="reprocess_preparing">Preparando página %1$d de %2$d…</string>
+    <string name="reprocess_failed">No se pudieron leer las páginas de este PDF</string>
+    <string name="reprocess_file_name">%1$s (reprocesado).pdf</string>
     <string name="tool_edit_content">Editar texto e imágenes</string>
     <string name="tool_edit_content_short">Editar contenido</string>
     <string name="tool_edit_content_desc">Cambia texto, mueve o redimensiona imágenes</string>
