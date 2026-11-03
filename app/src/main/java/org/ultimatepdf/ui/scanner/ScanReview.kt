@@ -215,8 +215,14 @@ private fun ProcessedPreview(
     showComposedId: Boolean = false,
     session: ScanSession? = null
 ) {
-    var zoomScale by remember(capture.id, capture.filter, capture.rotation, showComposedId) { mutableFloatStateOf(1f) }
-    var panOffset by remember(capture.id, capture.filter, capture.rotation, showComposedId) { mutableStateOf(Offset.Zero) }
+    // Keyed exactly like the pointerInput blocks below: a longer key list would swap these states
+    // out while the gesture handlers keep writing to the old ones, freezing the zoom.
+    var zoomScale by remember(capture.id, showComposedId) { mutableFloatStateOf(1f) }
+    var panOffset by remember(capture.id, showComposedId) { mutableStateOf(Offset.Zero) }
+    LaunchedEffect(capture.rotation) {
+        zoomScale = 1f
+        panOffset = Offset.Zero
+    }
 
     LaunchedEffect(capture.id, capture.corners, capture.filter, capture.filterIntensity, capture.rotation, mode) {
         capture.preview = pipeline.process(
