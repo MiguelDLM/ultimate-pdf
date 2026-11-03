@@ -189,209 +189,222 @@ class PerspectiveCorrector {
     // --- Filters -------------------------------------------------------------------------
 
     /**
-     * Estimates page illumination via morphological dilation (which replaces dark text with
-     * the surrounding paper background) followed by a large Gaussian blur. Divides the channel
-     * by this background estimate so shadows and lighting gradients flatten out cleanly.
+     * Paper-white normalisation. Estimates the page illumination ONLY from pixels that look like
+     * paper (bright, low saturation, locally brightest) using normalised convolution, then divides
+     * each RGB channel by that estimate. Large uniformly coloured or dark areas are not paper, so
+     * they are excluded from the estimate and keep their colour instead of being bleached to white
+     * (which is what a plain max-filter background model does). Per-channel division also removes
+     * the colour cast of the lighting. Returns a new 3-channel RGB mat.
      */
-    private fun flattenChannel(channel: Mat): Mat {
-        val kernelSize = (max(channel.cols(), channel.rows()) / 35).coerceIn(21, 65).let { if (it % 2 == 0) it + 1 else it }
-        val se = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(kernelSize.toDouble(), kernelSize.toDouble()))
-        val background = Mat()
-        Imgproc.dilate(channel, background, se)
+    private fun normalizeIllumination(rgb: Mat): Mat {
+        val scale = min(1.0, 220.0 / max(rgb.cols(), rgb.rows()))
+        val small = Mat()
+        Imgproc.resize(rgb, small, Size(), scale, scale, Imgproc.INTER_AREA)
+
+        val gray = Mat()
+        Imgproc.cvtColor(small, gray, Imgproc.COLOR_RGB2GRAY)
+        val hsv = Mat()
+        Imgproc.cvtColor(small, hsv, Imgproc.COLOR_RGB2HSV)
+        val hsvCh = mutableListOf<Mat>()
+        Core.split(hsv, hsvCh)
+        hsv.release()
+
+        // Reference paper level: 90th percentile of luminance.
+        val bytes = ByteArray(gray.cols() * gray.rows())
+        gray.get(0, 0, bytes)
+        val sorted = bytes.map { it.toInt() and 0xFF }.sorted()
+        val ref = sorted[(sorted.size * 0.9).toInt().coerceIn(0, sorted.size - 1)].toDouble().coerceAtLeast(1.0)
+
+        val bigK = (max(gray.cols(), gray.rows()) / 5).let { if (it % 2 == 0) it + 1 else it }.coerceAtLeast(3)
+        val se = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(bigK.toDouble(), bigK.toDouble()))
+        val localMax = Mat()
+        Imgproc.dilate(gray, localMax, se)
         se.release()
-        Imgproc.GaussianBlur(background, background, Size(kernelSize.toDouble(), kernelSize.toDouble()), 0.0)
+        val localMax08 = Mat()
+        localMax.convertTo(localMax08, CvType.CV_8U, 0.8)
+        localMax.release()
 
-        val fChannel = Mat()
-        val fBg = Mat()
-        channel.convertTo(fChannel, CvType.CV_32F)
-        background.convertTo(fBg, CvType.CV_32F)
-        Core.max(fBg, Scalar(1.0), fBg)
+        val m1 = Mat(); val m2 = Mat(); val m3 = Mat(); val mask = Mat()
+        Core.compare(gray, Scalar(0.55 * ref), m1, Core.CMP_GE)
+        Core.compare(hsvCh[1], Scalar(77.0), m2, Core.CMP_LT)
+        Core.compare(gray, localMax08, m3, Core.CMP_GE)
+        Core.bitwise_and(m1, m2, mask)
+        Core.bitwise_and(mask, m3, mask)
+        listOf(m1, m2, m3, localMax08, gray).forEach { it.release() }
+        hsvCh.forEach { it.release() }
 
-        val fNorm = Mat()
-        Core.divide(fChannel, fBg, fNorm, 255.0)
+        val total = small.cols() * small.rows()
+        if (Core.countNonZero(mask) < total * 0.01) {
+            mask.release(); small.release()
+            return rgb.clone()
+        }
 
+        val maskF = Mat()
+        mask.convertTo(maskF, CvType.CV_32F, 1.0 / 255.0)
+        val sigma = max(small.cols(), small.rows()) / 12.0
+        val den = Mat()
+        Imgproc.GaussianBlur(maskF, den, Size(0.0, 0.0), sigma)
+        val eps = 0.02
+
+        val smallCh = mutableListOf<Mat>()
+        Core.split(small, smallCh)
+        val fullCh = mutableListOf<Mat>()
+        Core.split(rgb, fullCh)
+        val outCh = mutableListOf<Mat>()
+        for (c in 0 until 3) {
+            val refC = Core.mean(smallCh[c], mask).`val`[0].coerceAtLeast(1.0)
+            val f = Mat()
+            smallCh[c].convertTo(f, CvType.CV_32F)
+            Core.multiply(f, maskF, f)
+            Imgproc.GaussianBlur(f, f, Size(0.0, 0.0), sigma)
+            Core.add(f, Scalar(eps * refC), f)
+            val d = Mat()
+            Core.add(den, Scalar(eps), d)
+            Core.divide(f, d, f)
+            d.release()
+
+            val illum = Mat()
+            Imgproc.resize(f, illum, Size(rgb.cols().toDouble(), rgb.rows().toDouble()), 0.0, 0.0, Imgproc.INTER_LINEAR)
+            f.release()
+            Core.max(illum, Scalar(40.0), illum)
+            val gain = Mat()
+            Core.divide(255.0, illum, gain)
+            illum.release()
+
+            val chF = Mat()
+            fullCh[c].convertTo(chF, CvType.CV_32F)
+            Core.multiply(chF, gain, chF)
+            gain.release()
+            val o = Mat()
+            chF.convertTo(o, CvType.CV_8U)
+            chF.release()
+            outCh.add(o)
+        }
         val out = Mat()
-        fNorm.convertTo(out, CvType.CV_8U)
+        Core.merge(outCh, out)
+        listOf(mask, maskF, den, small).forEach { it.release() }
+        (smallCh + fullCh + outCh).forEach { it.release() }
+        return out
+    }
 
-        listOf(fChannel, fBg, fNorm, background).forEach { it.release() }
+    /** Gentle white-clip / contrast curve; near-white snaps to pure white, mid tones keep their level. */
+    private fun curveLut(whitePoint: Int, blackPoint: Int, gamma: Double): Mat {
+        val lut = ByteArray(256)
+        for (i in 0..255) {
+            val t = ((i - blackPoint).toDouble() / (whitePoint - blackPoint)).coerceIn(0.0, 1.0)
+            lut[i] = (255.0 * Math.pow(t, gamma)).toInt().coerceIn(0, 255).toByte()
+        }
+        val m = Mat(1, 256, CvType.CV_8U)
+        m.put(0, 0, lut)
+        return m
+    }
+
+    /** Light unsharp mask applied on luminance only so colours are untouched. */
+    private fun sharpenLuma(rgb: Mat, amount: Double): Mat {
+        val lab = Mat()
+        Imgproc.cvtColor(rgb, lab, Imgproc.COLOR_RGB2Lab)
+        val ch = mutableListOf<Mat>()
+        Core.split(lab, ch)
+        val blur = Mat()
+        Imgproc.GaussianBlur(ch[0], blur, Size(0.0, 0.0), 1.1)
+        val sharp = Mat()
+        Core.addWeighted(ch[0], 1.0 + amount, blur, -amount, 0.0, sharp)
+        blur.release()
+        ch[0].release()
+        ch[0] = sharp
+        Core.merge(ch, lab)
+        ch.forEach { it.release() }
+        val out = Mat()
+        Imgproc.cvtColor(lab, out, Imgproc.COLOR_Lab2RGB)
+        lab.release()
         return out
     }
 
     /**
-     * Magic Color:
-     * 1. Illuminates and flattens paper on the Luminance channel in Lab space.
-     * 2. Remaps the tone curve so paper becomes pure, uniform white (> 210 -> 255) and text is deepened.
-     * 3. Sharpens text edges via unsharp masking without halos.
-     * 4. In HSV space, desaturates paper background to eliminate color noise/blotches,
-     *    and boosts saturation of authentic colored elements (stamps, signatures, graphics).
+     * Magic Color: per-channel paper-white normalisation, a gentle contrast curve applied equally to
+     * R/G/B (keeps hues and flat colour fills intact), a light saturation lift and luma-only sharpening.
      */
     private fun magicColor(rgb: Mat, intensity: Float): Mat {
-        val lab = Mat()
-        Imgproc.cvtColor(rgb, lab, Imgproc.COLOR_RGB2Lab)
-        val labChannels = mutableListOf<Mat>()
-        Core.split(lab, labChannels)
+        val norm = normalizeIllumination(rgb)
+        val lut = curveLut(whitePoint = (250 - 10 * intensity).toInt(), blackPoint = (6 + 14 * intensity).toInt(), gamma = 1.0 + 0.18 * intensity)
+        val toned = Mat()
+        Core.LUT(norm, lut, toned)
+        lut.release()
+        norm.release()
 
-        // Flatten luminance and apply document contrast tone curve
-        val flatL = flattenChannel(labChannels[0])
-        val whitePoint = (220 - 30 * intensity).toInt().coerceIn(180, 240)
-        val blackPoint = (30 + 40 * intensity).toInt().coerceIn(20, 80)
-
-        val lut = ByteArray(256)
-        for (i in 0..255) {
-            val v = when {
-                i >= whitePoint -> 255
-                i <= blackPoint -> (i * 0.75).toInt()
-                else -> {
-                    val t = (i - blackPoint).toFloat() / (whitePoint - blackPoint)
-                    (255f * Math.pow(t.toDouble(), 1.05)).toInt().coerceIn(0, 255)
-                }
-            }
-            lut[i] = v.toByte()
-        }
-        val lutMat = Mat(1, 256, CvType.CV_8U)
-        lutMat.put(0, 0, lut)
-        val toneL = Mat()
-        Core.LUT(flatL, lutMat, toneL)
-        lutMat.release()
-        flatL.release()
-
-        // Unsharp mask on Luminance for crisp text edges
-        val blurL = Mat()
-        Imgproc.GaussianBlur(toneL, blurL, Size(0.0, 0.0), 1.3)
-        val sharpL = Mat()
-        Core.addWeighted(toneL, 1.35, blurL, -0.35, 0.0, sharpL)
-        blurL.release()
-        toneL.release()
-
-        labChannels[0].release()
-        labChannels[0] = sharpL
-        Core.merge(labChannels, lab)
-        labChannels.forEach { it.release() }
-
-        val intermediateRgb = Mat()
-        Imgproc.cvtColor(lab, intermediateRgb, Imgproc.COLOR_Lab2RGB)
-        lab.release()
-
-        // Harmonize colors and desaturate paper in HSV space
         val hsv = Mat()
-        Imgproc.cvtColor(intermediateRgb, hsv, Imgproc.COLOR_RGB2HSV)
-        intermediateRgb.release()
-
-        val hsvChannels = mutableListOf<Mat>()
-        Core.split(hsv, hsvChannels)
-
-        // Find paper background: High Value (bright) and Low Saturation (neutral)
-        val brightMask = Mat()
-        val lowSatMask = Mat()
-        val paperBgMask = Mat()
-        Core.compare(hsvChannels[2], Scalar(195.0), brightMask, Core.CMP_GT)
-        Core.compare(hsvChannels[1], Scalar(50.0), lowSatMask, Core.CMP_LT)
-        Core.bitwise_and(brightMask, lowSatMask, paperBgMask)
-
-        // Whiten and purge chromatic noise on paper background
-        hsvChannels[1].setTo(Scalar(0.0), paperBgMask)
-        brightMask.release()
-        lowSatMask.release()
-        paperBgMask.release()
-
-        // Boost saturation of authentic colored content (signatures, stamps, illustrations)
-        val satMultiplier = 1.25 + 0.35 * intensity
-        Core.multiply(hsvChannels[1], Scalar(satMultiplier), hsvChannels[1])
-
-        val outRgb = Mat()
-        Core.merge(hsvChannels, hsv)
-        hsvChannels.forEach { it.release() }
-        Imgproc.cvtColor(hsv, outRgb, Imgproc.COLOR_HSV2RGB)
+        Imgproc.cvtColor(toned, hsv, Imgproc.COLOR_RGB2HSV)
+        toned.release()
+        val ch = mutableListOf<Mat>()
+        Core.split(hsv, ch)
+        Core.multiply(ch[1], Scalar(1.04 + 0.18 * intensity), ch[1])
+        Core.merge(ch, hsv)
+        ch.forEach { it.release() }
+        val colored = Mat()
+        Imgproc.cvtColor(hsv, colored, Imgproc.COLOR_HSV2RGB)
         hsv.release()
-        return outRgb
+
+        val out = sharpenLuma(colored, 0.4 + 0.2 * intensity)
+        colored.release()
+        return out
     }
 
+    /** Evens out lighting and shadows only; colours and contrast are left as photographed. */
     private fun noShadow(rgb: Mat, intensity: Float): Mat {
-        val lab = Mat()
-        Imgproc.cvtColor(rgb, lab, Imgproc.COLOR_RGB2Lab)
-        val channels = mutableListOf<Mat>()
-        Core.split(lab, channels)
-
-        val flatL = flattenChannel(channels[0])
-        val whiteCutoff = (235 - 20 * intensity).toInt().coerceIn(200, 245)
-        val lut = ByteArray(256)
-        for (i in 0..255) {
-            lut[i] = if (i >= whiteCutoff) 255.toByte() else ((i.toFloat() / whiteCutoff) * 255f).toInt().toByte()
-        }
-        val lutMat = Mat(1, 256, CvType.CV_8U)
-        lutMat.put(0, 0, lut)
-        val outL = Mat()
-        Core.LUT(flatL, lutMat, outL)
-        lutMat.release()
-        flatL.release()
-
-        channels[0].release()
-        channels[0] = outL
-        Core.merge(channels, lab)
-        channels.forEach { it.release() }
-
-        val outRgb = Mat()
-        Imgproc.cvtColor(lab, outRgb, Imgproc.COLOR_Lab2RGB)
-        lab.release()
-        return outRgb
+        val norm = normalizeIllumination(rgb)
+        val lut = curveLut(whitePoint = (252 - 8 * intensity).toInt(), blackPoint = 0, gamma = 1.0)
+        val out = Mat()
+        Core.LUT(norm, lut, out)
+        lut.release()
+        norm.release()
+        return out
     }
 
     private fun grayscale(rgb: Mat, intensity: Float): Mat {
+        val norm = normalizeIllumination(rgb)
         val gray = Mat()
-        Imgproc.cvtColor(rgb, gray, Imgproc.COLOR_RGB2GRAY)
-        val flat = flattenChannel(gray)
+        Imgproc.cvtColor(norm, gray, Imgproc.COLOR_RGB2GRAY)
+        norm.release()
+        val lut = curveLut(whitePoint = (248 - 12 * intensity).toInt(), blackPoint = (6 + 20 * intensity).toInt(), gamma = 1.0 + 0.2 * intensity)
+        val tone = Mat()
+        Core.LUT(gray, lut, tone)
+        lut.release()
         gray.release()
 
-        val whitePoint = (225 - 30 * intensity).toInt().coerceIn(185, 240)
-        val blackPoint = (30 + 35 * intensity).toInt().coerceIn(20, 80)
-        val lut = ByteArray(256)
-        for (i in 0..255) {
-            val v = when {
-                i >= whitePoint -> 255
-                i <= blackPoint -> (i * 0.75).toInt()
-                else -> {
-                    val t = (i - blackPoint).toFloat() / (whitePoint - blackPoint)
-                    (255f * Math.pow(t.toDouble(), 1.05)).toInt().coerceIn(0, 255)
-                }
-            }
-            lut[i] = v.toByte()
-        }
-        val lutMat = Mat(1, 256, CvType.CV_8U)
-        lutMat.put(0, 0, lut)
-        val tone = Mat()
-        Core.LUT(flat, lutMat, tone)
-        lutMat.release()
-        flat.release()
-
         val blur = Mat()
-        Imgproc.GaussianBlur(tone, blur, Size(0.0, 0.0), 1.2)
+        Imgproc.GaussianBlur(tone, blur, Size(0.0, 0.0), 1.1)
         val sharp = Mat()
-        Core.addWeighted(tone, 1.3, blur, -0.3, 0.0, sharp)
+        Core.addWeighted(tone, 1.4, blur, -0.4, 0.0, sharp)
         blur.release()
         tone.release()
         return sharp
     }
 
     /**
-     * Binarization tuned to preserve faint pencil, accents, and thin lines while
-     * keeping paper pristine white. Uses background normalization, subtle noise suppression,
-     * and adaptive thresholding controlled by [intensity].
+     * Binarization tuned to preserve faint pencil, accents, and thin lines while keeping paper
+     * pristine white. Adaptive threshold for fine ink, OR-ed with a global dark cut so large solid
+     * dark areas stay black instead of turning into hollow outlines.
      */
     private fun blackAndWhite(rgb: Mat, intensity: Float): Mat {
+        val norm = normalizeIllumination(rgb)
         val gray = Mat()
-        Imgproc.cvtColor(rgb, gray, Imgproc.COLOR_RGB2GRAY)
-        val flat = flattenChannel(gray)
-        gray.release()
+        Imgproc.cvtColor(norm, gray, Imgproc.COLOR_RGB2GRAY)
+        norm.release()
 
         val smoothed = Mat()
-        Imgproc.GaussianBlur(flat, smoothed, Size(3.0, 3.0), 0.0)
-        flat.release()
+        Imgproc.GaussianBlur(gray, smoothed, Size(3.0, 3.0), 0.0)
+        gray.release()
 
         val window = (max(smoothed.cols(), smoothed.rows()) / 45).coerceIn(17, 45).let { if (it % 2 == 0) it + 1 else it }
         val c = 5.0 + 8.0 * intensity
         val ink = Mat()
         Imgproc.adaptiveThreshold(smoothed, ink, 255.0, Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C, Imgproc.THRESH_BINARY, window, c)
+        val dark = Mat()
+        Core.compare(smoothed, Scalar(70.0 + 20.0 * intensity), dark, Core.CMP_LT)
         smoothed.release()
+        Core.bitwise_not(dark, dark)
+        Core.bitwise_and(ink, dark, ink)
+        dark.release()
         return ink
     }
 
