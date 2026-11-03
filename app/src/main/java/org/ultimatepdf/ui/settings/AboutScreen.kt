@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -54,7 +55,7 @@ fun appVersionName(context: Context): String =
     runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: ""
 
 @Composable
-fun AboutScreen(onBack: () -> Unit) {
+fun AboutScreen(onOpenChangelog: () -> Unit, onBack: () -> Unit) {
     val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
     Scaffold(topBar = { ScreenTopBar(stringResource(R.string.about_title), onBack) }) { padding ->
@@ -84,6 +85,23 @@ fun AboutScreen(onBack: () -> Unit) {
                 subtitle = "github.com/MiguelDLM/ultimate-pdf",
                 onClick = { uriHandler.openUri(SOURCE_URL) }
             )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onOpenChangelog)
+                    .padding(horizontal = 24.dp, vertical = 12.dp)
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(stringResource(R.string.about_changelog), style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        stringResource(R.string.about_changelog_subtitle),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             CreditSection(R.string.about_based_on, R.string.about_based_note, Inspirations) { uriHandler.openUri(it) }
             CreditSection(R.string.about_components, R.string.about_components_note, Components) { uriHandler.openUri(it) }
             Text(

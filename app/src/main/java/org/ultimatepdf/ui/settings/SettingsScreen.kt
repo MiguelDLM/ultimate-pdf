@@ -58,13 +58,14 @@ fun SettingsScreen(
     onCheckForUpdates: () -> Unit,
     onBack: () -> Unit
 ) {
-    // 0 = the settings list, 1 = signatures, 2 = stamps, 3 = about.
+    // 0 = the settings list, 1 = signatures, 2 = stamps, 3 = about, 4 = changelog (opened from about).
     var page by rememberSaveable { mutableIntStateOf(0) }
-    BackHandler(enabled = page != 0) { page = 0 }
+    BackHandler(enabled = page != 0) { page = if (page == 4) 3 else 0 }
     when (page) {
         1 -> return SignaturesScreen(signatures) { page = 0 }
         2 -> return StampsScreen(stamps) { page = 0 }
-        3 -> return AboutScreen { page = 0 }
+        3 -> return AboutScreen(onOpenChangelog = { page = 4 }) { page = 0 }
+        4 -> return ChangelogScreen { page = 3 }
     }
     Scaffold(topBar = { ScreenTopBar(stringResource(R.string.settings_title), onBack) }) { padding ->
         Column(
