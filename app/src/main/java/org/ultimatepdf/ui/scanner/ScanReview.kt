@@ -34,6 +34,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -434,6 +436,8 @@ private fun CornerEditor(photo: Bitmap, capture: ScanCapture) {
         val canvasW = imgW + marginPx * 2
         val canvasH = imgH + marginPx * 2
         val photoBitmap = remember(photo) { photo.asImageBitmap() }
+        // Screen position (canvas px) of the corner being dragged; drives the magnifier loupe.
+        var activePoint by remember { mutableStateOf<Offset?>(null) }
 
         Canvas(
             Modifier
@@ -454,15 +458,21 @@ private fun CornerEditor(photo: Bitmap, capture: ScanCapture) {
                         }
                         down.consume()
                         val workingCorners = corners.toMutableList()
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                            if (!change.pressed) break
-                            change.consume()
-                            val x = ((change.position.x - marginPx) / scaleX).coerceIn(0f, capture.width.toFloat())
-                            val y = ((change.position.y - marginPx) / scaleY).coerceIn(0f, capture.height.toFloat())
-                            workingCorners[nearest] = PointF(x, y)
-                            capture.corners = QuadCorners(workingCorners[0], workingCorners[1], workingCorners[2], workingCorners[3])
+                        activePoint = screenCorners[nearest]
+                        try {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                if (!change.pressed) break
+                                change.consume()
+                                val x = ((change.position.x - marginPx) / scaleX).coerceIn(0f, capture.width.toFloat())
+                                val y = ((change.position.y - marginPx) / scaleY).coerceIn(0f, capture.height.toFloat())
+                                workingCorners[nearest] = PointF(x, y)
+                                capture.corners = QuadCorners(workingCorners[0], workingCorners[1], workingCorners[2], workingCorners[3])
+                                activePoint = Offset(marginPx + x * scaleX, marginPx + y * scaleY)
+                            }
+                        } finally {
+                            activePoint = null
                         }
                     }
                 }
@@ -491,6 +501,42 @@ private fun CornerEditor(photo: Bitmap, capture: ScanCapture) {
             points.forEach {
                 drawCircle(Color.White, 14.dp.toPx(), it)
                 drawCircle(accent, 10.dp.toPx(), it)
+            }
+
+            // 4. Magnifier loupe: zoomed view of the area under the dragged corner,
+            // parked away from the finger so the user can see exactly where the corner lands.
+            activePoint?.let { active ->
+                val radius = 52.dp.toPx()
+                val edge = 8.dp.toPx()
+                val zoom = 3.5f
+                val cx = if (active.x > size.width / 2f) edge + radius else size.width - edge - radius
+                val cy = if (active.y > radius * 2f + 72.dp.toPx()) edge + radius else size.height - edge - radius
+                val center = Offset(cx, cy)
+                val loupe = Path().apply { addOval(androidx.compose.ui.geometry.Rect(center, radius)) }
+                val t = center - active * zoom
+                drawCircle(Color.Black, radius + 2.dp.toPx(), center)
+                clipPath(loupe) {
+                    drawRect(Color.Black, topLeft = center - Offset(radius, radius), size = androidx.compose.ui.geometry.Size(radius * 2, radius * 2))
+                    withTransform({
+                        translate(t.x, t.y)
+                        scale(zoom, zoom, Offset.Zero)
+                    }) {
+                        drawImage(
+                            image = photoBitmap,
+                            dstOffset = androidx.compose.ui.unit.IntOffset(kotlin.math.round(marginPx).toInt(), kotlin.math.round(marginPx).toInt()),
+                            dstSize = androidx.compose.ui.unit.IntSize(kotlin.math.round(imgW).toInt(), kotlin.math.round(imgH).toInt()),
+                            filterQuality = androidx.compose.ui.graphics.FilterQuality.High
+                        )
+                        drawPath(path, accent, style = Stroke(1.5.dp.toPx() / zoom))
+                    }
+                    // Crosshair at the exact corner position
+                    val arm = 10.dp.toPx()
+                    drawLine(Color.White, center - Offset(arm, 0f), center + Offset(arm, 0f), strokeWidth = 2.5.dp.toPx())
+                    drawLine(Color.White, center - Offset(0f, arm), center + Offset(0f, arm), strokeWidth = 2.5.dp.toPx())
+                    drawLine(accent, center - Offset(arm, 0f), center + Offset(arm, 0f), strokeWidth = 1.2.dp.toPx())
+                    drawLine(accent, center - Offset(0f, arm), center + Offset(0f, arm), strokeWidth = 1.2.dp.toPx())
+                }
+                drawCircle(Color.White, radius, center, style = Stroke(2.5.dp.toPx()))
             }
         }
     }
