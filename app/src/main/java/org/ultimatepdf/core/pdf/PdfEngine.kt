@@ -65,7 +65,7 @@ class PdfEngine(private val context: Context) {
         pdfRenderer = renderer
 
         val fileName = queryFileName(uri)
-        val fileSize = pfd.statSize
+        val fileSize = pfd.statSize.takeIf { it >= 0 } ?: querySize(context, uri) ?: 0L
 
         DocumentModel(
             uri = uri,

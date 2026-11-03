@@ -93,7 +93,10 @@ import org.ultimatepdf.core.signature.StampLibrary
 import org.ultimatepdf.ui.sign.rememberVectorizeFlow
 import org.ultimatepdf.ui.stamps.CustomTextStampDialog
 import org.ultimatepdf.ui.stamps.StampImageSourceDialog
+import org.ultimatepdf.core.pdf.DocumentDetails
+import org.ultimatepdf.core.pdf.readDocumentDetails
 import org.ultimatepdf.ui.components.copyToUri
+import org.ultimatepdf.ui.components.formatBytes
 import org.ultimatepdf.ui.navigation.AppDestination
 import org.ultimatepdf.ui.sign.SignatureColorPicker
 import org.ultimatepdf.ui.sign.SignaturePickerSheet
@@ -150,6 +153,7 @@ fun PdfViewerScreen(
     var isSaving by remember { mutableStateOf(false) }
     var pendingLeaveAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     var showGoToPage by remember { mutableStateOf(false) }
+    var showDetails by remember { mutableStateOf(false) }
     var showMoreSheet by remember { mutableStateOf(false) }
     var showSignatureSheet by remember { mutableStateOf(false) }
     var pendingSaveAsFile by remember { mutableStateOf<File?>(null) }
@@ -251,6 +255,28 @@ fun PdfViewerScreen(
     fun reloadAfterWrite(uri: Uri) {
         coroutineScope.launch {
             onDocumentReloaded(pdfEngine.openDocument(uri))
+        }
+    }
+
+    // "Save a copy": copies the file as it is on disk to a place the user picks; the open document is unchanged.
+    val saveCopyLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/pdf")
+    ) { target: Uri? ->
+        if (target == null) return@rememberLauncherForActivityResult
+        coroutineScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    val input = context.contentResolver.openInputStream(document.uri) ?: error("Cannot read ${document.uri}")
+                    val output = context.contentResolver.openOutputStream(target, "wt") ?: error("Cannot write $target")
+                    input.use { i -> output.use { o -> i.copyTo(o) } }
+                }
+            }
+            Toast.makeText(
+                context,
+                if (ok.isSuccess) context.getString(R.string.viewer_copy_saved)
+                else context.getString(R.string.viewer_save_error, ok.exceptionOrNull()?.message ?: ""),
+                Toast.LENGTH_LONG
+            ).show()
         }
     }
 
@@ -575,7 +601,8 @@ fun PdfViewerScreen(
                                 onGoToPage = { showGoToPage = true },
                                 onTools = { showMoreSheet = true },
                                 onShare = { sharePdf(context, document.uri, document.name) },
-                                onShowThumbnails = { showThumbnailDrawer = true }
+                                onDetails = { showDetails = true },
+                                onSaveCopy = { saveCopyLauncher.launch(document.name) }
                             )
                         }
                     }
@@ -1095,6 +1122,10 @@ fun PdfViewerScreen(
         )
     }
 
+    if (showDetails) {
+        DetailsDialog(document, session.hasUnsavedChanges) { showDetails = false }
+    }
+
     if (showGoToPage) {
         GoToPageDialog(
             pageCount = document.pageCount,
@@ -1220,7 +1251,8 @@ private fun ReaderOverflowMenu(
     onGoToPage: () -> Unit,
     onTools: () -> Unit,
     onShare: () -> Unit,
-    onShowThumbnails: () -> Unit
+    onDetails: () -> Unit,
+    onSaveCopy: () -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box {
@@ -1229,14 +1261,14 @@ private fun ReaderOverflowMenu(
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             DropdownMenuItem(
-                text = { Text(stringResource(R.string.show_thumbnails)) },
-                leadingIcon = { Icon(Icons.Default.PhotoLibrary, contentDescription = null) },
-                onClick = { expanded = false; onShowThumbnails() }
-            )
-            DropdownMenuItem(
                 text = { Text(stringResource(R.string.share)) },
                 leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
                 onClick = { expanded = false; onShare() }
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.viewer_save_copy)) },
+                leadingIcon = { Icon(Icons.Default.SaveAlt, contentDescription = null) },
+                onClick = { expanded = false; onSaveCopy() }
             )
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.viewer_go_to_page)) },
@@ -1252,6 +1284,11 @@ private fun ReaderOverflowMenu(
                 text = { Text(stringResource(R.string.tools_title)) },
                 leadingIcon = { Icon(Icons.Default.Apps, contentDescription = null) },
                 onClick = { expanded = false; onTools() }
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.viewer_details)) },
+                leadingIcon = { Icon(Icons.Default.Info, contentDescription = null) },
+                onClick = { expanded = false; onDetails() }
             )
         }
     }
@@ -1847,6 +1884,52 @@ private fun NoteDialog(
             }
         }
     )
+}
+
+@Composable
+private fun DetailsDialog(document: DocumentModel, hasUnsavedChanges: Boolean, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    var details by remember(document.uri, document.revision) { mutableStateOf<DocumentDetails?>(null) }
+    LaunchedEffect(document.uri, document.revision) { details = readDocumentDetails(context, document.uri) }
+    val dateFormat = remember { java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT) }
+    fun date(millis: Long?) = millis?.let { dateFormat.format(java.util.Date(it)) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.viewer_details)) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                DetailRow(R.string.details_name, document.name)
+                val d = details
+                DetailRow(R.string.details_size, (d?.sizeBytes ?: document.sizeBytes.takeIf { it >= 0 })?.let { formatBytes(it) })
+                DetailRow(R.string.details_pages, document.pageCount.toString())
+                DetailRow(R.string.details_location, d?.path)
+                DetailRow(R.string.details_modified, date(d?.modifiedMillis))
+                DetailRow(R.string.details_created, date(d?.createdMillis))
+                DetailRow(R.string.details_title, d?.title)
+                DetailRow(R.string.details_author, d?.author)
+                if (document.isEncrypted) DetailRow(R.string.details_protection, stringResource(R.string.details_protected))
+                if (hasUnsavedChanges) {
+                    Text(
+                        stringResource(R.string.details_unsaved_note),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.done)) } }
+    )
+}
+
+/** One label/value pair; hidden when the value is unknown so the dialog only shows what exists. */
+@Composable
+private fun DetailRow(@androidx.annotation.StringRes label: Int, value: String?) {
+    if (value.isNullOrBlank()) return
+    Column {
+        Text(stringResource(label), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.bodyMedium)
+    }
 }
 
 @Composable
