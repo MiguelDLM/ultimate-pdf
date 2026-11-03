@@ -34,6 +34,8 @@ class ScanCapture(
     var filter by mutableStateOf(filter)
     var filterIntensity by androidx.compose.runtime.mutableFloatStateOf(0.5f)
     var rotation by mutableIntStateOf(0)
+    /** Follow the text lines to flatten curved, folded or wavy paper (slower; needs text). */
+    var straightenText by mutableStateOf(false)
     /** Processed preview (cropped, filtered, rotated) at screen resolution. */
     var preview by mutableStateOf<List<Bitmap>>(emptyList())
 }

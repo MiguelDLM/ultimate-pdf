@@ -255,6 +255,8 @@
     <string name="scan_apply_all">Aplicar a todas</string>
     <string name="scan_crop">Recortar</string>
     <string name="scan_add_more">Añadir</string>
+    <string name="scan_straighten_text">Enderezar líneas de texto</string>
+    <string name="scan_straighten_text_desc">Aplana hojas curvadas, dobladas u onduladas siguiendo los renglones. Ideal para páginas con mucho texto; más lento.</string>
     <string name="scan_ocr">Reconocer texto (OCR)</string>
     <string name="scan_ocr_desc">Permite buscar y copiar el texto del PDF</string>
     <string name="scan_id_needs_back">Captura el reverso de la tarjeta para continuar</string>

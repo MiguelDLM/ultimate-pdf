@@ -256,6 +256,8 @@
     <string name="scan_apply_all">Apply to all</string>
     <string name="scan_crop">Crop</string>
     <string name="scan_add_more">Add</string>
+    <string name="scan_straighten_text">Straighten text lines</string>
+    <string name="scan_straighten_text_desc">Flattens curled, folded or wavy pages by following the lines of text. Best on text-heavy pages; slower.</string>
     <string name="scan_ocr">Recognize text (OCR)</string>
     <string name="scan_ocr_desc">Makes the PDF searchable and its text copyable</string>
     <string name="scan_id_needs_back">Capture the back of the card to continue</string>

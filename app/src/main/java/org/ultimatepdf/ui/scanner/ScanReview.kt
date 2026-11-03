@@ -144,6 +144,7 @@ fun ScanReview(
                         session.captures.forEach {
                             it.filter = capture.filter
                             it.filterIntensity = capture.filterIntensity
+                            it.straightenText = capture.straightenText
                         }
                     }
                 )
@@ -178,6 +179,24 @@ fun ScanReview(
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+                }
+                if (session.mode != ScanMode.ID_CARD) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 2.dp)
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(stringResource(R.string.scan_straighten_text), style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                stringResource(R.string.scan_straighten_text_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(checked = capture.straightenText, onCheckedChange = { capture.straightenText = it })
                     }
                 }
                 Row(horizontalArrangement = Arrangement.SpaceEvenly, modifier = Modifier.fillMaxWidth()) {
@@ -224,7 +243,7 @@ private fun ProcessedPreview(
         panOffset = Offset.Zero
     }
 
-    LaunchedEffect(capture.id, capture.corners, capture.filter, capture.filterIntensity, capture.rotation, mode) {
+    LaunchedEffect(capture.id, capture.corners, capture.filter, capture.filterIntensity, capture.rotation, mode, capture.straightenText) {
         capture.preview = pipeline.process(
             capture.file,
             capture.width,
@@ -233,7 +252,8 @@ private fun ProcessedPreview(
             capture.rotation,
             mode,
             PREVIEW_SIZE,
-            capture.filterIntensity
+            capture.filterIntensity,
+            capture.straightenText
         )
     }
 

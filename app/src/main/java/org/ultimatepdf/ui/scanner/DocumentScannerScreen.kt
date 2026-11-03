@@ -88,7 +88,7 @@ fun DocumentScannerScreen(
             try {
                 captures.forEachIndexed { i, capture ->
                     progress = context.getString(R.string.scan_processing, i + 1, captures.size)
-                    pipeline.process(capture.file, capture.width, capture.corners, capture.filter, capture.rotation, session.mode, MAX_PHOTO_SIZE, capture.filterIntensity)
+                    pipeline.process(capture.file, capture.width, capture.corners, capture.filter, capture.rotation, session.mode, MAX_PHOTO_SIZE, capture.filterIntensity, capture.straightenText)
                         .forEach { pages += ScanOutputPage(it, null, capture.filter == ScanFilter.BLACK_WHITE) }
                 }
                 val output = if (session.mode == ScanMode.ID_CARD && pages.size == 2) {

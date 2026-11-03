@@ -84,10 +84,11 @@ class PerspectiveCorrector {
 
     /**
      * Splits a photographed book spread into its two pages at the spine: the darkest
-     * column (the gutter's shadow) within the middle third of the image, and then applies
-     * cylindrical dewarping to flatten the paper curvature near the spine.
+     * column (the gutter's shadow) within the middle third of the image, then flattens each page:
+     * by following its text lines when [straightenText] is on (falling back to the fixed cylinder
+     * model when a page has too little text), otherwise with the fixed cylinder model.
      */
-    fun splitBookSpread(spread: Bitmap): Pair<Bitmap, Bitmap> {
+    fun splitBookSpread(spread: Bitmap, straightenText: Boolean = false): Pair<Bitmap, Bitmap> {
         val rgb = toMat(spread)
         val gray = Mat()
         Imgproc.cvtColor(rgb, gray, Imgproc.COLOR_RGB2GRAY)
@@ -113,8 +114,8 @@ class PerspectiveCorrector {
         columns.release()
         val left = Bitmap.createBitmap(spread, 0, 0, spine, spread.height)
         val right = Bitmap.createBitmap(spread, spine, 0, spread.width - spine, spread.height)
-        val dewarpedLeft = dewarpPage(left, isRightPage = false)
-        val dewarpedRight = dewarpPage(right, isRightPage = true)
+        val dewarpedLeft = (if (straightenText) straightenTextLines(left) else null) ?: dewarpPage(left, isRightPage = false)
+        val dewarpedRight = (if (straightenText) straightenTextLines(right) else null) ?: dewarpPage(right, isRightPage = true)
         if (dewarpedLeft !== left) left.recycle()
         if (dewarpedRight !== right) right.recycle()
         return dewarpedLeft to dewarpedRight
@@ -129,6 +130,14 @@ class PerspectiveCorrector {
         val dewarpedMat = dewarpCylinder(mat, isRightPage)
         mat.release()
         return toBitmap(dewarpedMat)
+    }
+
+    /** Straightens curved/folded text lines (see [TextLineStraightener]); null when there's too little text. */
+    fun straightenTextLines(page: Bitmap): Bitmap? {
+        val mat = toMat(page)
+        val out = runCatching { TextLineStraightener.straighten(mat) }.getOrNull()
+        mat.release()
+        return out?.let { toBitmap(it) }
     }
 
     /**

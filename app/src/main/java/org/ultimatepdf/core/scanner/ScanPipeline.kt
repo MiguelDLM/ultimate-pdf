@@ -58,13 +58,19 @@ class ScanPipeline(
         rotation: Int,
         mode: ScanMode,
         maxSize: Int,
-        intensity: Float = 0.5f
+        intensity: Float = 0.5f,
+        straightenText: Boolean = false
     ): List<Bitmap> = withContext(Dispatchers.Default) {
         val photo = loadImage(file, maxSize) ?: return@withContext emptyList()
         val scale = photo.width.toFloat() / sourceWidth
         val flat = corrector.warpPerspective(photo, corners.scaled(scale))
         photo.recycle()
-        val parts = if (mode == ScanMode.BOOK) corrector.splitBookSpread(flat).toList() else listOf(flat)
+        val parts = when {
+            mode == ScanMode.BOOK -> corrector.splitBookSpread(flat, straightenText).toList()
+            straightenText && mode == ScanMode.DOCUMENT ->
+                listOf(corrector.straightenTextLines(flat)?.also { flat.recycle() } ?: flat)
+            else -> listOf(flat)
+        }
         parts.map { part -> rotate(corrector.applyFilter(part, filter, intensity), rotation) }
     }
 
