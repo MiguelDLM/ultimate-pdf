@@ -42,6 +42,10 @@ import java.util.Locale
 fun DocumentScannerScreen(
     onPdfCreated: (Uri) -> Unit,
     onBack: () -> Unit,
+    /** Images shared from other apps; loaded straight into the review so they can become a PDF. */
+    initialImages: List<Uri> = emptyList(),
+    /** Keep the whole frame of the initial images instead of detecting edges; the user adjusts the crop. */
+    fullFrameImages: Boolean = false,
     @Suppress("UNUSED_PARAMETER") isTablet: Boolean = false
 ) {
     val context = LocalContext.current
@@ -57,17 +61,19 @@ fun DocumentScannerScreen(
     }
 
     val requestCamera = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { hasCamera = it }
-    LaunchedEffect(Unit) { if (!hasCamera) requestCamera.launch(Manifest.permission.CAMERA) }
+    LaunchedEffect(Unit) { if (!hasCamera && initialImages.isEmpty()) requestCamera.launch(Manifest.permission.CAMERA) }
 
-    val importImages = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
-        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+    fun loadImages(uris: List<Uri>, fullFrame: Boolean = false) {
+        if (uris.isEmpty()) return
         scope.launch {
             progress = context.getString(R.string.scan_loading)
-            for (uri in uris) SignatureImages.loadUpright(context, uri, MAX_PHOTO_SIZE)?.let { session.add(it) }
+            for (uri in uris) SignatureImages.loadUpright(context, uri, MAX_PHOTO_SIZE)?.let { session.add(it, detectEdges = !fullFrame) }
             progress = null
             if (session.captures.isNotEmpty()) reviewing = true
         }
     }
+    val importImages = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { loadImages(it) }
+    LaunchedEffect(initialImages) { loadImages(initialImages, fullFrameImages) }
 
     val saveLauncher = rememberSaveFileLauncher { uri ->
         progress = null
@@ -121,7 +127,7 @@ fun DocumentScannerScreen(
     BackHandler {
         when {
             progress != null -> Unit
-            reviewing -> reviewing = false
+            reviewing && initialImages.isEmpty() -> reviewing = false
             else -> leave()
         }
     }
@@ -132,7 +138,8 @@ fun DocumentScannerScreen(
             pipeline = pipeline,
             onAddMore = { reviewing = false },
             onSave = ::save,
-            onBack = { reviewing = false }
+            // Started from shared images: back from the review leaves instead of opening the camera.
+            onBack = { if (initialImages.isNotEmpty()) leave() else reviewing = false }
         )
         hasCamera -> ScanCamera(
             session = session,

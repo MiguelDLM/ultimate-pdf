@@ -2,6 +2,7 @@ package org.ultimatepdf.ui
 
 import android.content.Context
 import android.content.Intent
+import androidx.core.content.IntentCompat
 import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
@@ -87,6 +88,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var signatureService: DigitalSignatureService
 
     private var incomingUri by mutableStateOf<Uri?>(null)
+    /** Images shared to the app from other apps; they open in the scanner to become a PDF. */
+    private var incomingImages by mutableStateOf<List<Uri>>(emptyList())
 
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(AppSettings.wrapWithLanguage(newBase))
@@ -115,7 +118,7 @@ class MainActivity : ComponentActivity() {
         }
         exporter = PdfExporter(applicationContext, contentEditor, OcrEngine(applicationContext), thumbnails, TableDataExtractor(applicationContext))
 
-        if (savedInstanceState == null) incomingUri = extractPdfUri(intent)
+        if (savedInstanceState == null) handleIncoming(intent)
 
         setContent {
             val dark = when (settings.themeMode) {
@@ -253,6 +256,15 @@ class MainActivity : ComponentActivity() {
             return true
         }
 
+        var scannerImages by remember { mutableStateOf<List<Uri>>(emptyList()) }
+        LaunchedEffect(incomingImages) {
+            if (incomingImages.isNotEmpty()) {
+                scannerImages = incomingImages
+                incomingImages = emptyList()
+                openTool = AppDestination.SCANNER
+            }
+        }
+
         LaunchedEffect(incomingUri) {
             incomingUri?.let {
                 incomingUri = null
@@ -313,8 +325,11 @@ class MainActivity : ComponentActivity() {
                     isTablet = isTablet
                 )
                 AppDestination.SCANNER -> DocumentScannerScreen(
-                    onPdfCreated = ::openDocument,
-                    onBack = onBack,
+                    onPdfCreated = { scannerImages = emptyList(); openDocument(it) },
+                    onBack = { scannerImages = emptyList(); onBack() },
+                    initialImages = scannerImages,
+                    // Shared images open uncropped; the user adjusts the crop in the review.
+                    fullFrameImages = true,
                     isTablet = isTablet
                 )
                 AppDestination.MERGE, AppDestination.EXTRACT_PAGES -> PageComposerScreen(
@@ -413,7 +428,23 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        extractPdfUri(intent)?.let { incomingUri = it }
+        handleIncoming(intent)
+    }
+
+    private fun handleIncoming(intent: Intent?) {
+        val images = extractSharedImages(intent)
+        if (images.isNotEmpty()) incomingImages = images else incomingUri = extractPdfUri(intent)
+    }
+
+    /** Image URIs from a SEND / SEND_MULTIPLE intent (empty when the intent carries something else). */
+    private fun extractSharedImages(intent: Intent?): List<Uri> {
+        if (intent == null) return emptyList()
+        val uris = when (intent.action) {
+            Intent.ACTION_SEND -> listOfNotNull(IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java))
+            Intent.ACTION_SEND_MULTIPLE -> IntentCompat.getParcelableArrayListExtra(intent, Intent.EXTRA_STREAM, Uri::class.java).orEmpty()
+            else -> return emptyList()
+        }
+        return uris.filter { (contentResolver.getType(it) ?: intent.type)?.startsWith("image/") == true }
     }
 
     private fun extractPdfUri(intent: Intent?): Uri? {

@@ -53,13 +53,14 @@ class ScanSession(private val dir: File, private val pipeline: ScanPipeline) {
     val isComplete: Boolean get() = if (mode == ScanMode.ID_CARD) captures.size == 2 else captures.isNotEmpty()
 
     /** Stores [photo] (already upright) and adds it with auto-detected corners. */
-    suspend fun add(photo: Bitmap) {
+    suspend fun add(photo: Bitmap, detectEdges: Boolean = true) {
         val capture = withContext(Dispatchers.Default) {
             dir.mkdirs()
             val id = nextId++
             val file = File(dir, "capture_$id.jpg")
             FileOutputStream(file).use { photo.compress(Bitmap.CompressFormat.JPEG, 95, it) }
-            val corners = pipeline.detectCorners(photo)
+            val corners = if (detectEdges) pipeline.detectCorners(photo)
+                else QuadCorners.defaultFor(photo.width.toFloat(), photo.height.toFloat(), insetRatio = 0f)
             val blurry = pipeline.isBlurry(photo, corners)
             val thumbScale = THUMB_SIZE.toFloat() / maxOf(photo.width, photo.height)
             val thumb = Bitmap.createScaledBitmap(photo, (photo.width * thumbScale).toInt(), (photo.height * thumbScale).toInt(), true)
