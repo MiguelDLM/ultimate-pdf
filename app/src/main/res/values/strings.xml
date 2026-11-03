@@ -260,6 +260,7 @@
     <string name="scan_ocr_desc">Makes the PDF searchable and its text copyable</string>
     <string name="scan_id_needs_back">Capture the back of the card to continue</string>
     <string name="scan_crop_auto">Auto</string>
+    <string name="scan_blurry_warning">This photo looks blurry. Retake it for a sharper scan.</string>
     <string name="scan_crop_full">Whole photo</string>
     <string name="scan_processing">Processing page %1$d of %2$d…</string>
     <string name="scan_recognizing">Recognizing text %1$d of %2$d…</string>

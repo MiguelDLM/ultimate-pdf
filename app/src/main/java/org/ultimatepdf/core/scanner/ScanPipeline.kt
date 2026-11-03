@@ -34,6 +34,9 @@ class ScanPipeline(
         runCatching { detector.detect(bitmap) }.getOrNull()?.clamped(bitmap.width.toFloat(), bitmap.height.toFloat())
             ?: QuadCorners.defaultFor(bitmap.width.toFloat(), bitmap.height.toFloat(), insetRatio = 0.04f)
 
+    /** Variance-of-Laplacian focus measure over the page area; low values mean a blurry photo. */
+    fun isBlurry(bitmap: Bitmap, corners: QuadCorners): Boolean = runCatching { corrector.sharpness(bitmap, corners) < BLUR_THRESHOLD }.getOrDefault(false)
+
     suspend fun loadImage(file: File, maxSize: Int): Bitmap? = withContext(Dispatchers.IO) {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.path, bounds)
@@ -77,4 +80,8 @@ class ScanPipeline(
         PointF(bottomRight.x * f, bottomRight.y * f),
         PointF(bottomLeft.x * f, bottomLeft.y * f)
     )
+
+    private companion object {
+        const val BLUR_THRESHOLD = 40.0
+    }
 }

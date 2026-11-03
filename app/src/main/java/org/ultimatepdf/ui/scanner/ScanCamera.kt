@@ -62,9 +62,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.delay
+import androidx.compose.runtime.mutableIntStateOf
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -111,11 +115,22 @@ fun ScanCamera(
     var flyingThumb by remember { mutableStateOf<Bitmap?>(null) }
     val flyAnim = remember { Animatable(0f) }
 
+    // Tap-to-focus feedback ring: where the camera is focusing and whether it locked.
+    var focusPos by remember { mutableStateOf<Offset?>(null) }
+    var focusResult by remember { mutableIntStateOf(0) } // 0 focusing, 1 locked, 2 failed
+    var focusTapId by remember { mutableIntStateOf(0) }
+    var focusJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    val focusScale = remember { Animatable(1f) }
+    val focusAlpha = remember { Animatable(0f) }
+
     val imageCapture = remember {
         ImageCapture.Builder()
-            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
             .setResolutionSelector(
-                ResolutionSelector.Builder().setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY).build()
+                ResolutionSelector.Builder()
+                    .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
+                    .setResolutionStrategy(ResolutionStrategy.HIGHEST_AVAILABLE_STRATEGY)
+                    .build()
             )
             .build()
     }
@@ -220,12 +235,63 @@ fun ScanCamera(
             .fillMaxSize()
             .background(Color.Black)
     ) {
-        AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
+        AndroidView(
+            factory = { previewView },
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    // Tap to focus and meter exposure on the paper.
+                    detectTapGestures { offset ->
+                        val point = previewView.meteringPointFactory.createPoint(offset.x, offset.y)
+                        val future = camera?.cameraControl?.startFocusAndMetering(
+                            androidx.camera.core.FocusMeteringAction.Builder(point).build()
+                        )
+                        val tapId = ++focusTapId
+                        focusJob?.cancel()
+                        focusJob = scope.launch {
+                            focusPos = offset
+                            focusResult = 0
+                            focusAlpha.snapTo(1f)
+                            focusScale.snapTo(1.6f)
+                            launch { focusScale.animateTo(1f, tween(durationMillis = 260, easing = FastOutSlowInEasing)) }
+                            future?.addListener({
+                                if (tapId == focusTapId) {
+                                    focusResult = if (runCatching { future.get().isFocusSuccessful }.getOrDefault(false)) 1 else 2
+                                }
+                            }, ContextCompat.getMainExecutor(context))
+                            // Hold the ring until the camera answers (or gives up), then let it fade out.
+                            withTimeoutOrNull(4000) { while (focusResult == 0 && future != null) delay(50) }
+                            delay(700)
+                            focusAlpha.animateTo(0f, tween(300))
+                        }
+                    }
+                }
+        )
 
         if (session.mode == ScanMode.ID_CARD) {
             IdCardGuideOverlay(step = count.coerceAtMost(1), modifier = Modifier.fillMaxSize())
         } else {
             OutlineOverlay(outline, Modifier.fillMaxSize())
+        }
+
+        focusPos?.let { pos ->
+            if (focusAlpha.value > 0.01f) {
+                val ringColor = when (focusResult) {
+                    1 -> Color(0xFF4CAF50)
+                    2 -> Color(0xFFFF5252)
+                    else -> Color.White
+                }
+                Canvas(Modifier.fillMaxSize()) {
+                    val r = 36.dp.toPx() * focusScale.value
+                    val a = focusAlpha.value
+                    drawCircle(Color.Black.copy(alpha = 0.35f * a), r + 1.5.dp.toPx(), pos, style = Stroke(4.dp.toPx()))
+                    drawCircle(ringColor.copy(alpha = a), r, pos, style = Stroke(2.dp.toPx()))
+                    val tick = 7.dp.toPx()
+                    listOf(Offset(0f, -1f), Offset(1f, 0f), Offset(0f, 1f), Offset(-1f, 0f)).forEach { d ->
+                        drawLine(ringColor.copy(alpha = a), pos + d * r, pos + d * (r - tick), strokeWidth = 2.dp.toPx())
+                    }
+                }
+            }
         }
 
         // Shutter flash effect
@@ -772,4 +838,4 @@ private fun uprightBitmap(image: ImageProxy): Bitmap {
 }
 
 private const val ANALYSIS_INTERVAL_MS = 120L
-const val MAX_PHOTO_SIZE = 2400
+const val MAX_PHOTO_SIZE = 3600

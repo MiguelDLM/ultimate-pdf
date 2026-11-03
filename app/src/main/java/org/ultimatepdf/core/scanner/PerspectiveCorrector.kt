@@ -46,6 +46,28 @@ class PerspectiveCorrector {
         return toBitmap(output)
     }
 
+    /** Variance of the Laplacian of the page area normalised to ~1000 px: the classic focus measure. */
+    fun sharpness(bitmap: Bitmap, corners: QuadCorners): Double {
+        val xs = corners.toList().map { it.x }; val ys = corners.toList().map { it.y }
+        val x0 = xs.min().toInt().coerceIn(0, bitmap.width - 2); val y0 = ys.min().toInt().coerceIn(0, bitmap.height - 2)
+        val x1 = xs.max().toInt().coerceIn(x0 + 1, bitmap.width); val y1 = ys.max().toInt().coerceIn(y0 + 1, bitmap.height)
+        val crop = Bitmap.createBitmap(bitmap, x0, y0, x1 - x0, y1 - y0)
+        val mat = toMat(crop)
+        if (crop !== bitmap) crop.recycle()
+        val gray = Mat()
+        Imgproc.cvtColor(mat, gray, Imgproc.COLOR_RGB2GRAY)
+        mat.release()
+        val f = 1000.0 / max(gray.cols(), gray.rows())
+        if (f < 1.0) Imgproc.resize(gray, gray, Size(), f, f, Imgproc.INTER_AREA)
+        val lap = Mat()
+        Imgproc.Laplacian(gray, lap, CvType.CV_64F)
+        val mean = org.opencv.core.MatOfDouble(); val std = org.opencv.core.MatOfDouble()
+        Core.meanStdDev(lap, mean, std)
+        val v = std.toArray()[0].let { it * it }
+        listOf(gray, lap, mean, std).forEach { it.release() }
+        return v
+    }
+
     fun applyFilter(src: Bitmap, filter: ScanFilter, intensity: Float = 0.5f): Bitmap {
         if (filter == ScanFilter.ORIGINAL) return src
         val rgb = toMat(src)

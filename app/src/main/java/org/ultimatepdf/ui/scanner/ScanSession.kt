@@ -26,7 +26,9 @@ class ScanCapture(
     val height: Int,
     val thumbnail: Bitmap,
     corners: QuadCorners,
-    filter: ScanFilter
+    filter: ScanFilter,
+    /** True when the photo looks out of focus / motion-blurred. */
+    val blurry: Boolean = false
 ) {
     var corners by mutableStateOf(corners)
     var filter by mutableStateOf(filter)
@@ -54,11 +56,12 @@ class ScanSession(private val dir: File, private val pipeline: ScanPipeline) {
             dir.mkdirs()
             val id = nextId++
             val file = File(dir, "capture_$id.jpg")
-            FileOutputStream(file).use { photo.compress(Bitmap.CompressFormat.JPEG, 92, it) }
+            FileOutputStream(file).use { photo.compress(Bitmap.CompressFormat.JPEG, 95, it) }
             val corners = pipeline.detectCorners(photo)
+            val blurry = pipeline.isBlurry(photo, corners)
             val thumbScale = THUMB_SIZE.toFloat() / maxOf(photo.width, photo.height)
             val thumb = Bitmap.createScaledBitmap(photo, (photo.width * thumbScale).toInt(), (photo.height * thumbScale).toInt(), true)
-            ScanCapture(id, file, photo.width, photo.height, thumb, corners, defaultFilter)
+            ScanCapture(id, file, photo.width, photo.height, thumb, corners, defaultFilter, blurry)
         }
         captures += capture
         selected = captures.lastIndex

@@ -259,6 +259,7 @@
     <string name="scan_ocr_desc">Permite buscar y copiar el texto del PDF</string>
     <string name="scan_id_needs_back">Captura el reverso de la tarjeta para continuar</string>
     <string name="scan_crop_auto">Auto</string>
+    <string name="scan_blurry_warning">Esta foto se ve borrosa. Vuelve a tomarla para un escaneo más nítido.</string>
     <string name="scan_crop_full">Foto completa</string>
     <string name="scan_processing">Procesando página %1$d de %2$d…</string>
     <string name="scan_recognizing">Reconociendo texto %1$d de %2$d…</string>

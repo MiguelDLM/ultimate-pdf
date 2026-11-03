@@ -31,7 +31,7 @@ class SearchablePdfGenerator {
 
     companion object {
         private const val TAG = "SearchablePdfGenerator"
-        private const val JPEG_QUALITY = 0.85f
+        private const val JPEG_QUALITY = 0.92f
         /** Pages are A4-wide (595 pt); height follows the image's aspect ratio. */
         private const val PAGE_WIDTH_PT = 595f
         private val UNICODE_FONTS = listOf("/system/fonts/Roboto-Regular.ttf", "/system/fonts/NotoSans-Regular.ttf")

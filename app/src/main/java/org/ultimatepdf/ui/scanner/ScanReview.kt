@@ -128,6 +128,14 @@ fun ScanReview(
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
                     )
                 }
+                if (capture.blurry) {
+                    Text(
+                        stringResource(R.string.scan_blurry_warning),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                    )
+                }
                 FilterRow(
                     selected = capture.filter,
                     onSelect = { capture.filter = it },
