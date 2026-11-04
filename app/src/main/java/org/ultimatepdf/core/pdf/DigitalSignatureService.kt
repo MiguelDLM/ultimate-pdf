@@ -55,10 +55,7 @@ class DigitalSignatureService(private val context: Context) {
         outputFile: File
     ): Boolean = withContext(Dispatchers.IO) {
         try {
-            val inputStream = context.contentResolver.openInputStream(sourceUri)
-                ?: return@withContext false
-
-            PDDocument.load(inputStream).use { doc ->
+            PdfPasswords.load(context, sourceUri).use { doc ->
                 val targetPageIndex = config.pageIndex.coerceIn(0, doc.numberOfPages - 1)
                 val targetPage = doc.getPage(targetPageIndex)
 

@@ -78,7 +78,7 @@ class PdfThumbnails(private val context: Context) {
     private fun sourceLocked(uri: Uri): Source? {
         sources[uri]?.let { return it }
         return try {
-            val pfd = context.contentResolver.openFileDescriptor(uri, "r") ?: return null
+            val pfd = PdfPasswords.openRenderFd(context, uri) ?: return null
             Source(pfd, PdfRenderer(pfd)).also { sources[uri] = it }
         } catch (e: Exception) {
             Log.w(TAG, "Cannot open $uri", e)

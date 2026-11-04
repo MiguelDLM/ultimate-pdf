@@ -43,8 +43,8 @@ class PdfSecurityManager(private val context: Context) {
         outputFile: File
     ): Boolean = withContext(Dispatchers.IO) {
         try {
-            context.contentResolver.openInputStream(sourceUri)?.use { input ->
-                PDDocument.load(input).use { doc ->
+            run {
+                PdfPasswords.load(context, sourceUri).use { doc ->
                     val ap = AccessPermission().apply {
                         setCanPrint(canPrint)
                         setCanExtractContent(canExtractContent)
@@ -108,7 +108,7 @@ class PdfSecurityManager(private val context: Context) {
             val tempFiles = mutableListOf<File>()
             for (uri in sourceUris) {
                 val tempFile = File.createTempFile("merge_src_", ".pdf", context.cacheDir)
-                context.contentResolver.openInputStream(uri)?.use { inStream ->
+                PdfPasswords.openStream(context, uri)?.use { inStream ->
                     FileOutputStream(tempFile).use { outStream ->
                         inStream.copyTo(outStream)
                     }
@@ -136,8 +136,8 @@ class PdfSecurityManager(private val context: Context) {
     ): List<File> = withContext(Dispatchers.IO) {
         val resultFiles = mutableListOf<File>()
         try {
-            context.contentResolver.openInputStream(sourceUri)?.use { input ->
-                PDDocument.load(input).use { doc ->
+            run {
+                PdfPasswords.load(context, sourceUri).use { doc ->
                     val splitter = Splitter().apply {
                         setSplitAtPage(splitAtPage)
                     }
@@ -163,8 +163,8 @@ class PdfSecurityManager(private val context: Context) {
      */
     suspend fun extractText(sourceUri: Uri): String = withContext(Dispatchers.IO) {
         try {
-            context.contentResolver.openInputStream(sourceUri)?.use { input ->
-                PDDocument.load(input).use { doc ->
+            run {
+                PdfPasswords.load(context, sourceUri).use { doc ->
                     val stripper = PDFTextStripper()
                     return@withContext stripper.getText(doc)
                 }
@@ -181,8 +181,8 @@ class PdfSecurityManager(private val context: Context) {
     suspend fun extractImages(sourceUri: Uri, outputDir: File): List<File> = withContext(Dispatchers.IO) {
         val images = mutableListOf<File>()
         try {
-            context.contentResolver.openInputStream(sourceUri)?.use { input ->
-                PDDocument.load(input).use { doc ->
+            run {
+                PdfPasswords.load(context, sourceUri).use { doc ->
                     var count = 0
                     for (page in doc.pages) {
                         val resources = page.resources ?: continue
@@ -221,8 +221,8 @@ class PdfSecurityManager(private val context: Context) {
             context.contentResolver.openFileDescriptor(sourceUri, "r")?.use { pfd ->
                 originalSize = pfd.statSize
             }
-            context.contentResolver.openInputStream(sourceUri)?.use { input ->
-                PDDocument.load(input).use { doc ->
+            run {
+                PdfPasswords.load(context, sourceUri).use { doc ->
                     for (page in doc.pages) {
                         val resources = page.resources ?: continue
                         for (xObjectName in resources.xObjectNames) {

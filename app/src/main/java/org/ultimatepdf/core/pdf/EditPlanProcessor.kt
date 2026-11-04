@@ -35,10 +35,7 @@ class EditPlanProcessor(private val context: Context) {
     ): Boolean = withContext(Dispatchers.IO) {
         try {
             // Load base document
-            val baseInputStream = context.contentResolver.openInputStream(primarySourceUri)
-                ?: return@withContext false
-
-            PDDocument.load(baseInputStream).use { sourceDoc ->
+            PdfPasswords.load(context, primarySourceUri).use { sourceDoc ->
                 PDDocument().use { targetDoc ->
                     // Track auxiliary documents opened for inserted pages
                     val auxiliaryDocs = mutableMapOf<Uri, PDDocument>()
@@ -47,9 +44,7 @@ class EditPlanProcessor(private val context: Context) {
                         for (pageState in plan.activePages) {
                             val sourcePage = if (pageState.sourceDocumentUri != null) {
                                 val auxDoc = auxiliaryDocs.getOrPut(pageState.sourceDocumentUri) {
-                                    val stream = context.contentResolver.openInputStream(pageState.sourceDocumentUri)
-                                        ?: throw IllegalStateException("Cannot open ${pageState.sourceDocumentUri}")
-                                    PDDocument.load(stream)
+                                    PdfPasswords.load(context, pageState.sourceDocumentUri)
                                 }
                                 auxDoc.getPage(pageState.sourceIndex.coerceIn(0, auxDoc.numberOfPages - 1))
                             } else {

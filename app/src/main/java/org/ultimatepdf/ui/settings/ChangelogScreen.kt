@@ -16,6 +16,9 @@ private class Release(val version: String, val date: String, @StringRes val item
 
 /** Released versions, newest first. Add an entry here (and its strings) with every release. */
 private val Changelog = listOf(
+    Release("1.4", "2026-11-04", listOf(
+        R.string.changelog_1_4_password
+    )),
     Release("1.3", "2026-11-03", listOf(
         R.string.changelog_1_3_filters,
         R.string.changelog_1_3_quality,

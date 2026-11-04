@@ -175,8 +175,7 @@ class PdfPageOps(private val context: Context) {
     }
 
     private fun load(uri: Uri): PDDocument {
-        val input = context.contentResolver.openInputStream(uri) ?: throw IllegalArgumentException("Cannot read $uri")
-        return input.use { PDDocument.load(it, MemoryUsageSetting.setupTempFileOnly()) }
+        return PdfPasswords.load(context, uri)
     }
 
     private class CountingStream : OutputStream() {

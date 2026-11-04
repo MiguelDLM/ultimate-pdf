@@ -133,7 +133,7 @@ fun ContentEditorScreen(
         val doc = currentDocument ?: return@LaunchedEffect
         val first = File(workDir, "v0.pdf")
         withContext(Dispatchers.IO) {
-            context.contentResolver.openInputStream(doc.uri)?.use { input -> first.outputStream().use { input.copyTo(it) } }
+            org.ultimatepdf.core.pdf.PdfPasswords.openStream(context, doc.uri)?.use { input -> first.outputStream().use { input.copyTo(it) } }
         }
         versions += first
         busy = false

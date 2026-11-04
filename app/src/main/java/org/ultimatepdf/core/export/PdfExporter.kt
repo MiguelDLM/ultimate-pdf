@@ -61,7 +61,7 @@ class PdfExporter(
     ): ExportResult = withContext(Dispatchers.IO) {
         val temp = File(context.cacheDir, "export_src_${System.currentTimeMillis()}.pdf")
         try {
-            context.contentResolver.openInputStream(source)?.use { input -> temp.outputStream().use { input.copyTo(it) } }
+            org.ultimatepdf.core.pdf.PdfPasswords.openStream(context, source)?.use { input -> temp.outputStream().use { input.copyTo(it) } }
                 ?: throw IllegalStateException("Cannot read $source")
             val total = PDDocument.load(temp).use { it.numberOfPages }
             val tempUri = Uri.fromFile(temp)

@@ -105,9 +105,8 @@ class TableDataExtractor(private val context: Context? = null) {
      */
     suspend fun extractTablesFromPdf(uri: Uri): List<ExtractedTable> = withContext(Dispatchers.IO) {
         val ctx = context ?: throw IllegalStateException("Context required for PDF I/O")
-        val input = ctx.contentResolver.openInputStream(uri) ?: return@withContext emptyList()
-        input.use { stream ->
-            PDDocument.load(stream).use { doc ->
+        run {
+            PdfPasswords.load(ctx, uri).use { doc ->
                 (0 until doc.numberOfPages).map { pageIndex ->
                     val collector = TableWordStripper()
                     collector.sortByPosition = true

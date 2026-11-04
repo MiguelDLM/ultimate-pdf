@@ -482,6 +482,7 @@
     <string name="about_components_note">Included in the app under their own licenses.</string>
     <string name="about_changelog_subtitle">Latest news in each version</string>
     <string name="about_changelog">Changelog</string>
+    <string name="changelog_1_4_password">Open password-protected PDFs: the reader asks for the password, and your edits keep the file protected</string>
     <string name="changelog_1_3_filters">Scanner filters rebuilt: colour areas and photos keep their colour instead of washing out</string>
     <string name="changelog_1_3_quality">Sharper scans: higher photo resolution, tap to focus with a focus ring, blur warning</string>
     <string name="changelog_1_3_crop">Magnifier while dragging the crop corners</string>
@@ -565,4 +566,7 @@
     <string name="update_retry">Retry</string>
     <string name="update_cancel">Cancel</string>
     <string name="update_download_complete">Download completed</string>
+    <string name="pdf_password_title">Password required</string>
+    <string name="pdf_password_message">This PDF is protected. Enter its password to open it.</string>
+    <string name="pdf_password_wrong">Incorrect password</string>
 </resources>

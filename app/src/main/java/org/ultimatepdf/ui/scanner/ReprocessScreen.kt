@@ -85,7 +85,7 @@ private suspend fun renderPages(
     onProgress: (done: Int, total: Int) -> Unit
 ): List<File> = withContext(Dispatchers.IO) {
     dir.mkdirs()
-    val pfd = context.contentResolver.openFileDescriptor(uri, "r") ?: return@withContext emptyList()
+    val pfd = org.ultimatepdf.core.pdf.PdfPasswords.openRenderFd(context, uri) ?: return@withContext emptyList()
     pfd.use {
         PdfRenderer(it).use { renderer ->
             val total = renderer.pageCount

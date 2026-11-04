@@ -19,13 +19,18 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.ultimatepdf.R
 import org.ultimatepdf.core.model.DocumentModel
 import org.ultimatepdf.core.pdf.DigitalSignatureService
 import org.ultimatepdf.core.pdf.EditPlanProcessor
 import org.ultimatepdf.core.pdf.PdfAnnotationStore
 import org.ultimatepdf.core.pdf.PdfEngine
+import org.ultimatepdf.core.pdf.PasswordRequiredException
+import org.ultimatepdf.core.pdf.PdfPasswords
+import org.ultimatepdf.ui.components.PdfPasswordDialog
 import org.ultimatepdf.core.export.PdfExporter
 import org.ultimatepdf.core.pdf.PdfContentEditor
 import org.ultimatepdf.core.signature.SignatureLibrary
@@ -102,6 +107,7 @@ class MainActivity : ComponentActivity() {
 
         settings = AppSettings(this)
         recents = RecentDocuments(this)
+        PdfPasswords.clearStaleCopies(applicationContext)
         pdfEngine = PdfEngine(applicationContext)
         textExtractor = PdfTextExtractor(applicationContext)
         annotationStore = PdfAnnotationStore(applicationContext)
@@ -144,6 +150,10 @@ class MainActivity : ComponentActivity() {
         // Document a file tool starts from (the open one when launched from the reader).
         var toolSource by rememberSaveable { mutableStateOf<Uri?>(null) }
         var isLoading by remember { mutableStateOf(false) }
+        // Protected PDF waiting for its password, and whether the last attempt was wrong.
+        var passwordUri by remember { mutableStateOf<Uri?>(null) }
+        var passwordWrong by remember { mutableStateOf(false) }
+        var isUnlocking by remember { mutableStateOf(false) }
         val session = remember { AnnotationSession() }
 
         var availableUpdate by remember { mutableStateOf<ReleaseInfo?>(null) }
@@ -210,6 +220,9 @@ class MainActivity : ComponentActivity() {
                     showDocument(pdfEngine.openDocument(uri))
                     isEditMode = false
                     openTool = null
+                } catch (e: PasswordRequiredException) {
+                    passwordWrong = e.wrongPassword
+                    passwordUri = uri
                 } catch (e: Exception) {
                     documentUri = null
                     recents.remove(uri)
@@ -420,6 +433,27 @@ class MainActivity : ComponentActivity() {
                         isTablet = isTablet
                     )
                 }
+            }
+
+            passwordUri?.let { uri ->
+                PdfPasswordDialog(
+                    isChecking = isUnlocking,
+                    wrongPassword = passwordWrong,
+                    onSubmit = { password ->
+                        coroutineScope.launch {
+                            isUnlocking = true
+                            val ok = withContext(Dispatchers.IO) { PdfPasswords.tryUnlock(applicationContext, uri, password) }
+                            isUnlocking = false
+                            if (ok) {
+                                passwordUri = null
+                                openDocument(uri)
+                            } else {
+                                passwordWrong = true
+                            }
+                        }
+                    },
+                    onDismiss = { passwordUri = null }
+                )
             }
 
             availableUpdate?.let { release ->

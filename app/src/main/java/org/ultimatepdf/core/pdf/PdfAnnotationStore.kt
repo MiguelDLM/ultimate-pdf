@@ -68,9 +68,8 @@ class PdfAnnotationStore(private val context: Context) {
 
     suspend fun read(uri: Uri): List<PdfAnnotation> = withContext(Dispatchers.IO) {
         try {
-            val input = context.contentResolver.openInputStream(uri) ?: return@withContext emptyList()
-            input.use { stream ->
-                PDDocument.load(stream).use { doc ->
+            run {
+                PdfPasswords.load(context, uri).use { doc ->
                     doc.pages.flatMapIndexed { pageIndex, page ->
                         val mapper = PageMapper(page)
                         page.annotations.mapIndexedNotNull { i, a ->
@@ -95,10 +94,8 @@ class PdfAnnotationStore(private val context: Context) {
         annotations: List<PdfAnnotation>,
         outputFile: File
     ) = withContext(Dispatchers.IO) {
-        val input = context.contentResolver.openInputStream(sourceUri)
-            ?: throw IllegalArgumentException("Cannot read $sourceUri")
-        input.use { stream ->
-            PDDocument.load(stream).use { doc ->
+        run {
+            PdfPasswords.load(context, sourceUri).use { doc ->
                 doc.pages.forEachIndexed { pageIndex, page ->
                     val onPage = annotations.filter { it.pageIndex == pageIndex }
                     val kept = onPage.mapNotNullTo(HashSet()) { it.sourceIndex }

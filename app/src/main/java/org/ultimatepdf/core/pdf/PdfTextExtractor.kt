@@ -142,7 +142,7 @@ class PdfTextExtractor(private val context: Context) {
         closeLocked()
         documentUri = uri
         document = try {
-            context.contentResolver.openInputStream(uri)?.use { PDDocument.load(it) }
+            PdfPasswords.load(context, uri)
         } catch (e: Exception) {
             Log.w(TAG, "Unable to parse document text", e)
             null

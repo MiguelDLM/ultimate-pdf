@@ -29,8 +29,8 @@ suspend fun readDocumentDetails(context: Context, uri: Uri): DocumentDetails = w
     var author: String? = null
     var created: Long? = null
     runCatching {
-        context.contentResolver.openInputStream(uri)?.use { input ->
-            PDDocument.load(input).use { doc ->
+        run {
+            PdfPasswords.load(context, uri).use { doc ->
                 val info = doc.documentInformation
                 title = info.title?.takeIf { it.isNotBlank() }
                 author = info.author?.takeIf { it.isNotBlank() }

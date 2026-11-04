@@ -57,7 +57,10 @@ class PdfEngine(private val context: Context) {
     suspend fun openDocument(uri: Uri): DocumentModel = withContext(Dispatchers.IO) {
         close()
 
-        val pfd = context.contentResolver.openFileDescriptor(uri, "r")
+        // Throws PasswordRequiredException for protected files; the UI asks for the password and retries.
+        val encrypted = PdfPasswords.needsPassword(context, uri)
+        if (encrypted) throw PasswordRequiredException(wrongPassword = false)
+        val pfd = PdfPasswords.openRenderFd(context, uri, refresh = true)
             ?: throw IllegalArgumentException("Cannot open FileDescriptor for $uri")
         currentPfd = pfd
 
@@ -72,7 +75,8 @@ class PdfEngine(private val context: Context) {
             name = fileName,
             pageCount = renderer.pageCount,
             sizeBytes = fileSize,
-            revision = ++revision
+            revision = ++revision,
+            isEncrypted = PdfPasswords.hasPassword(uri)
         )
     }
 
@@ -157,8 +161,8 @@ class PdfEngine(private val context: Context) {
     suspend fun extractAcroForms(uri: Uri): List<AcroFormField> = withContext(Dispatchers.IO) {
         val formsList = mutableListOf<AcroFormField>()
         try {
-            context.contentResolver.openInputStream(uri)?.use { inputStream ->
-                PDDocument.load(inputStream).use { pdDoc ->
+            PdfPasswords.load(context, uri).use { pdDoc ->
+                run {
                     val acroForm = pdDoc.documentCatalog.acroForm ?: return@withContext emptyList()
                     for (field in acroForm.fields) {
                         val name = field.fullyQualifiedName ?: field.partialName ?: "Field"
@@ -214,8 +218,8 @@ class PdfEngine(private val context: Context) {
         outputFile: File
     ): Boolean = withContext(Dispatchers.IO) {
         try {
-            context.contentResolver.openInputStream(sourceUri)?.use { inputStream ->
-                PDDocument.load(inputStream).use { pdDoc ->
+            PdfPasswords.load(context, sourceUri).use { pdDoc ->
+                run {
                     val acroForm = pdDoc.documentCatalog.acroForm ?: return@withContext false
                     for ((fieldName, value) in fieldValues) {
                         val field = acroForm.getField(fieldName)

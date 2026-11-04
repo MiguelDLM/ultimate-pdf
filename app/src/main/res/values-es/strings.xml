@@ -480,6 +480,7 @@
     <string name="about_components_note">Incluidos en la app bajo sus propias licencias.</string>
     <string name="about_changelog_subtitle">Novedades de cada versión</string>
     <string name="about_changelog">Novedades</string>
+    <string name="changelog_1_4_password">Abre PDFs protegidos con contraseña: el visor la pide y tus cambios mantienen el archivo protegido</string>
     <string name="changelog_1_3_filters">Filtros del escáner rehechos: las zonas de color y las fotos conservan su color en vez de deslavarse</string>
     <string name="changelog_1_3_quality">Escaneos más nítidos: mayor resolución de foto, enfoque táctil con anillo y aviso de desenfoque</string>
     <string name="changelog_1_3_crop">Lupa al arrastrar las esquinas del recorte</string>
@@ -563,4 +564,7 @@
     <string name="update_retry">Reintentar</string>
     <string name="update_cancel">Cancelar</string>
     <string name="update_download_complete">Descarga completada</string>
+    <string name="pdf_password_title">Se requiere contraseña</string>
+    <string name="pdf_password_message">Este PDF está protegido. Introduce su contraseña para abrirlo.</string>
+    <string name="pdf_password_wrong">Contraseña incorrecta</string>
 </resources>
